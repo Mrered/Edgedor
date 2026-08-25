@@ -20,6 +20,9 @@
   let showSearch = false;
   let searchQuery = '';
   let searchInput: HTMLInputElement;
+  let settingsCloseButton: HTMLButtonElement;
+  let searchCloseButton: HTMLButtonElement;
+  let overlayOrigin: HTMLElement | null = null;
   let draggedTabId = '';
   let notice = '';
   let noticeTimer: number | undefined;
@@ -86,8 +89,10 @@
     persist({ ...session, settings: { ...session.settings, tabLayout } });
   }
   function changeFontSize(delta: number) { persist({ ...session, settings: { ...session.settings, fontSize: Math.max(10, Math.min(32, session.settings.fontSize + delta)) } }); }
-  function openSettings() { showSettings = true; }
-  function openSearch() { showSearch = true; window.setTimeout(() => searchInput?.focus(), 0); }
+  function openSettings() { overlayOrigin = document.activeElement as HTMLElement | null; showSettings = true; window.setTimeout(() => settingsCloseButton?.focus(), 0); }
+  function closeSettings() { showSettings = false; overlayOrigin?.focus(); overlayOrigin = null; }
+  function openSearch() { overlayOrigin = document.activeElement as HTMLElement | null; showSearch = true; window.setTimeout(() => searchInput?.focus(), 0); }
+  function closeSearch() { showSearch = false; overlayOrigin?.focus(); overlayOrigin = null; }
   function searchResults() {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return [];
@@ -97,7 +102,7 @@
       return index < 0 ? [] : [{ tab, index, excerpt: tab.content.slice(Math.max(0, index - 32), index + query.length + 48).replace(/\s+/g, ' ') }];
     });
   }
-  function focusSearchResult(tabId: string) { persist(focusTab(session, tabId)); showSearch = false; }
+  function focusSearchResult(tabId: string) { persist(focusTab(session, tabId)); closeSearch(); }
   async function refreshPreview(tab: SessionTab) {
     if (!tab.filePath || tab.kind !== 'preview') return;
     try {
@@ -206,6 +211,8 @@
     void invoke('set_edge_modifier', { modifier: session.settings.edgeModifier });
     expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) { persist(result.state); showNotice(`${result.expired.length} 个未访问标签已超时，已放入撤销槽`); } }, 60_000);
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape' && showSearch) { event.preventDefault(); closeSearch(); return; }
+      if (event.key === 'Escape' && showSettings) { event.preventDefault(); closeSettings(); return; }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void saveActive(); }
       if ((event.metaKey || event.ctrlKey) && (event.key === '+' || event.key === '=')) { event.preventDefault(); changeFontSize(1); }
       if ((event.metaKey || event.ctrlKey) && event.key === '-') { event.preventDefault(); changeFontSize(-1); }
@@ -269,9 +276,9 @@
   {#if notice}<div class="notice" role="status">{notice}</div>{/if}
   <footer aria-live="polite">{status.bridgeReady ? '原生面板已连接' : '正在连接原生面板…'} · {session.tabs.length} 个标签 · 撤销槽 {session.undoSlots.length}/10</footer>
   {#if showSearch}
-    <div class="search-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) showSearch = false; }}>
+    <div class="search-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) closeSearch(); }}>
       <div class="search-panel" role="dialog" aria-modal="true" aria-label="跨标签查找">
-        <div class="settings-heading"><h2>跨标签查找</h2><button aria-label="关闭查找" onclick={() => showSearch = false}>×</button></div>
+        <div class="settings-heading"><h2>跨标签查找</h2><button bind:this={searchCloseButton} aria-label="关闭查找" onclick={closeSearch}>×</button></div>
         <input bind:this={searchInput} bind:value={searchQuery} placeholder="输入要查找的内容" aria-label="查找内容" />
         <div class="search-results">
           {#if searchQuery.trim() && searchResults().length === 0}<p>没有匹配内容</p>{/if}
@@ -283,9 +290,9 @@
     </div>
   {/if}
   {#if showSettings}
-    <div class="settings-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) showSettings = false; }}>
+    <div class="settings-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) closeSettings(); }}>
       <div class="settings-panel" role="dialog" aria-modal="true" aria-label="Edgedor 设置">
-        <div class="settings-heading"><h2>设置</h2><button aria-label="关闭设置" onclick={() => showSettings = false}>×</button></div>
+        <div class="settings-heading"><h2>设置</h2><button bind:this={settingsCloseButton} aria-label="关闭设置" onclick={closeSettings}>×</button></div>
         <label>编辑器快捷键方案<select aria-label="编辑器快捷键方案" value={session.settings.shortcutProfile} onchange={setShortcutProfile}><option value="vscode">VS Code</option><option value="sublime">Sublime Text</option><option value="jetbrains">JetBrains</option><option value="vim">Vim（编辑区）</option></select></label>
         <label>边缘呼出修饰键<select aria-label="边缘呼出修饰键" value={session.settings.edgeModifier} onchange={setEdgeModifier}><option value="command">Command（⌘）</option><option value="option">Option（⌥）</option><option value="control">Control（⌃）</option><option value="shift">Shift（⇧）</option></select></label>
         <label>标签布局<select aria-label="标签布局" value={session.settings.tabLayout} onchange={setTabLayout}><option value="top">顶部横向滚动</option><option value="left">左侧标签</option><option value="right">右侧标签</option></select></label>
@@ -296,7 +303,7 @@
         <label class="checkbox"><input type="checkbox" checked={session.settings.showMenuBarIcon} onchange={setMenuBarIcon} />显示菜单栏图标</label>
         <p class="settings-note">临时标签 24 小时未访问会过期，并进入可撤销槽。文件只有触发保存时才写回原路径。</p>
         <button class="danger" onclick={clearWorkspace}>清空标签和撤销槽</button>
-        <button class="done" onclick={() => showSettings = false}>完成</button>
+        <button class="done" onclick={closeSettings}>完成</button>
       </div>
     </div>
   {/if}
