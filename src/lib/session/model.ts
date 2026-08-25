@@ -48,6 +48,8 @@ export interface UndoSlot {
 
 export interface SessionSettings {
   preserveOnRestart: boolean;
+  shortcutProfile: 'vscode' | 'sublime' | 'jetbrains' | 'vim';
+  shortcutOverrides: Record<string, string>;
 }
 
 export interface SessionState {
@@ -117,7 +119,7 @@ export function createSessionState(now = Date.now()): SessionState {
     groups: [group],
     activeGroupId: group.id,
     undoSlots: [],
-    settings: { preserveOnRestart: true }
+    settings: { preserveOnRestart: true, shortcutProfile: 'vscode', shortcutOverrides: {} }
   };
 }
 
@@ -210,6 +212,7 @@ export function deserializeSession(serialized: string): SessionState | undefined
   try {
     const parsed = JSON.parse(serialized) as SessionState;
     if (parsed?.version !== SESSION_VERSION || !Array.isArray(parsed.tabs) || !Array.isArray(parsed.groups)) return undefined;
+    parsed.settings = { preserveOnRestart: parsed.settings?.preserveOnRestart ?? true, shortcutProfile: parsed.settings?.shortcutProfile ?? 'vscode', shortcutOverrides: parsed.settings?.shortcutOverrides ?? {} };
     return parsed;
   } catch {
     return undefined;
