@@ -164,7 +164,7 @@
   <footer aria-live="polite">{status.bridgeReady ? '原生面板已连接' : '正在连接原生面板…'} · {session.tabs.length} 个标签 · 撤销槽 {session.undoSlots.length}/10</footer>
   {#if showSettings}
     <div class="settings-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) showSettings = false; }}>
-      <aside class="settings-panel" role="dialog" aria-modal="true" aria-label="Edgedor 设置">
+      <div class="settings-panel" role="dialog" aria-modal="true" aria-label="Edgedor 设置">
         <div class="settings-heading"><h2>设置</h2><button aria-label="关闭设置" onclick={() => showSettings = false}>×</button></div>
         <label>编辑器快捷键方案<select aria-label="编辑器快捷键方案" value={session.settings.shortcutProfile} onchange={setShortcutProfile}><option value="vscode">VS Code</option><option value="sublime">Sublime Text</option><option value="jetbrains">JetBrains</option><option value="vim">Vim（编辑区）</option></select></label>
         <label>边缘呼出修饰键<select aria-label="边缘呼出修饰键" value={session.settings.edgeModifier} onchange={setEdgeModifier}><option value="command">Command（⌘）</option><option value="option">Option（⌥）</option><option value="control">Control（⌃）</option><option value="shift">Shift（⇧）</option></select></label>
@@ -175,7 +175,7 @@
         <label class="checkbox"><input type="checkbox" checked={session.settings.showMenuBarIcon} onchange={setMenuBarIcon} />显示菜单栏图标</label>
         <p class="settings-note">临时标签 24 小时未访问会过期，并进入可撤销槽。文件只有触发保存时才写回原路径。</p>
         <button class="done" onclick={() => showSettings = false}>完成</button>
-      </aside>
+      </div>
     </div>
   {/if}
 </main>
