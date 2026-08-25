@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Edgedor",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "identifier": "com.mrered.edgedor",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -24,6 +24,19 @@
   },
   "bundle": {
     "active": true,
+    "fileAssociations": [
+      {
+        "ext": ["txt", "md", "markdown", "json", "js", "jsx", "ts", "tsx", "rs", "py", "go", "java", "c", "h", "cpp", "css", "html", "xml", "yaml", "yml", "toml", "sh"],
+        "name": "Edgedor Text",
+        "role": "Editor",
+        "mimeType": "text/plain"
+      },
+      {
+        "ext": ["png", "jpg", "jpeg", "gif", "webp", "pdf"],
+        "name": "Edgedor Preview",
+        "role": "Viewer"
+      }
+    ],
     "targets": "all",
     "macOS": {
       "minimumSystemVersion": "26.0"

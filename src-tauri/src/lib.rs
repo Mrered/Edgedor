@@ -67,6 +67,9 @@ fn set_panel_pinned(pinned: bool, app: AppHandle) -> Result<(), String> {
 fn quit_app(app: AppHandle) { app.exit(0); }
 
 #[tauri::command]
+fn startup_paths() -> Vec<String> { std::env::args().skip(1).filter(|path| !path.starts_with('-')).collect() }
+
+#[tauri::command]
 fn set_menu_bar_icon_visible(visible: bool, app: AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     { app.state::<native_panel::NativePanel>().set_status_item_visible(visible)?; }
@@ -111,7 +114,9 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     let builder = builder.manage(native_panel::NativePanel::default());
     builder
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            let paths: Vec<String> = args.into_iter().skip(1).filter(|path| !path.starts_with('-')).collect();
+            if !paths.is_empty() { let _ = app.emit("open_paths", paths); }
             #[cfg(target_os = "macos")]
             if let Some(panel) = app.try_state::<native_panel::NativePanel>() {
                 let _ = panel.action("show");
@@ -122,7 +127,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, preview_file, set_panel_pinned, quit_app, set_menu_bar_icon_visible, set_edge_modifier])
+        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, preview_file, set_panel_pinned, quit_app, startup_paths, set_menu_bar_icon_visible, set_edge_modifier])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {

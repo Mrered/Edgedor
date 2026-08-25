@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { listen } from '@tauri-apps/api/event';
   import { open, save } from '@tauri-apps/plugin-dialog';
   import EditorSurface from '../components/EditorSurface.svelte';
   import PreviewSurface from '../components/PreviewSurface.svelte';
@@ -13,6 +14,7 @@
   let session: SessionState = createSessionState();
   let activeTab: SessionTab | undefined;
   let unlisten: (() => void) | undefined;
+  let unlistenPaths: (() => void) | undefined;
   let expiryTimer: number | undefined;
   let showSettings = false;
   let showSearch = false;
@@ -219,8 +221,14 @@
     const onDragOver = (event: DragEvent) => event.preventDefault();
     window.addEventListener('dragover', onDragOver);
     window.addEventListener('drop', openDroppedFile);
-    void (async () => { unlisten = await listenPanelStatus((next) => (status = next)); await panelAction('show'); })();
-    return () => { unlisten?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); };
+    void (async () => {
+      unlisten = await listenPanelStatus((next) => (status = next));
+      unlistenPaths = await listen<string[]>('open_paths', (event) => { for (const path of event.payload) void openPath(path); });
+      const initialPaths = await invoke<string[]>('startup_paths');
+      for (const path of initialPaths) await openPath(path);
+      await panelAction('show');
+    })();
+    return () => { unlisten?.(); unlistenPaths?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); };
   });
 </script>
 <svelte:head><title>Edgedor</title></svelte:head>
