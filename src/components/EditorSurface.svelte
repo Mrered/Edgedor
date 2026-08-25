@@ -3,10 +3,11 @@
   import { createEditor } from '../lib/editor/monaco';
   import type { SessionTab } from '../lib/session';
   export let tab: SessionTab;
+  export let fontSize = 14;
   export let onChange: (content: string) => void = () => {};
   let host: HTMLDivElement;
   onMount(() => {
-    const editor = createEditor(host);
+    const editor = createEditor(host, fontSize);
     editor.setValue(tab.content);
     const subscription = editor.onDidChangeModelContent(() => onChange(editor.getValue()));
     editor.focus();

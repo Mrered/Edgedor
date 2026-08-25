@@ -27,6 +27,7 @@
   async function togglePinned() { pinned = !pinned; await invoke('set_panel_pinned', { pinned }); }
   function setShortcutProfile(event: Event) { const value = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['shortcutProfile']; persist({ ...session, settings: { ...session.settings, shortcutProfile: value } }); }
   function setPreserveOnRestart(event: Event) { const preserve = (event.currentTarget as HTMLInputElement).checked; const next = { ...session, settings: { ...session.settings, preserveOnRestart: preserve } }; session = next; if (preserve) localStorage.setItem('edgedor.session', serializeSession(next)); else localStorage.removeItem('edgedor.session'); }
+  function changeFontSize(delta: number) { persist({ ...session, settings: { ...session.settings, fontSize: Math.max(10, Math.min(32, session.settings.fontSize + delta)) } }); }
   async function openTextFile() {
     const path = window.prompt('打开文本文件路径');
     if (!path) return;
@@ -45,7 +46,12 @@
     const saved = deserializeSession(localStorage.getItem('edgedor.session') ?? '');
     session = saved ?? addTab(session, createTab());
     expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) persist(result.state); }, 60_000);
-    const onKeyDown = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void saveActive(); } };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void saveActive(); }
+      if ((event.metaKey || event.ctrlKey) && (event.key === '+' || event.key === '=')) { event.preventDefault(); changeFontSize(1); }
+      if ((event.metaKey || event.ctrlKey) && event.key === '-') { event.preventDefault(); changeFontSize(-1); }
+      if ((event.metaKey || event.ctrlKey) && event.key === '0') { event.preventDefault(); persist({ ...session, settings: { ...session.settings, fontSize: 14 } }); }
+    };
     window.addEventListener('keydown', onKeyDown);
     const onDragOver = (event: DragEvent) => event.preventDefault();
     window.addEventListener('dragover', onDragOver);
@@ -58,7 +64,7 @@
 <main class="shell">
   <ToolbarMount /><div class="controls"><button onclick={openTextFile}>打开文本</button><select aria-label="编辑器快捷键方案" value={session.settings.shortcutProfile} onchange={setShortcutProfile}><option value="vscode">VS Code</option><option value="sublime">Sublime Text</option><option value="jetbrains">JetBrains</option><option value="vim">Vim</option></select><label><input type="checkbox" checked={session.settings.preserveOnRestart} onchange={setPreserveOnRestart} />重启保留</label><button class="pin" aria-pressed={pinned} onclick={togglePinned}>{pinned ? '取消固定' : '固定面板'}</button></div>
   <nav class="tabs" aria-label="编辑标签"><button class="add" onclick={newTab}>＋</button>{#each session.tabs as tab (tab.id)}<button class:active={tab.id === activeTab?.id} onclick={() => persist(focusTab(session, tab.id))}>{tab.title}</button>{/each}<button class="close" onclick={closeActive}>×</button><button class="restore" onclick={restoreClosed}>撤销关闭</button></nav>
-  <section class="workspace" aria-label="临时编辑区">{#if activeTab}{#key activeTab.id}<EditorSurface tab={activeTab} onChange={editContent} />{/key}{:else}<button class="empty" onclick={newTab}>新建临时标签</button>{/if}</section>
+  <section class="workspace" aria-label="临时编辑区">{#if activeTab}{#key `${activeTab.id}:${session.settings.fontSize}`}<EditorSurface tab={activeTab} fontSize={session.settings.fontSize} onChange={editContent} />{/key}{:else}<button class="empty" onclick={newTab}>新建临时标签</button>{/if}</section>
   <footer aria-live="polite">{status.bridgeReady ? '原生面板已连接' : '正在连接原生面板…'} · {session.tabs.length} 个标签</footer>
 </main>
 <style>

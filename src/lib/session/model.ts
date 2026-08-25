@@ -50,6 +50,7 @@ export interface SessionSettings {
   preserveOnRestart: boolean;
   shortcutProfile: 'vscode' | 'sublime' | 'jetbrains' | 'vim';
   shortcutOverrides: Record<string, string>;
+  fontSize: number;
 }
 
 export interface SessionState {
@@ -119,7 +120,7 @@ export function createSessionState(now = Date.now()): SessionState {
     groups: [group],
     activeGroupId: group.id,
     undoSlots: [],
-    settings: { preserveOnRestart: true, shortcutProfile: 'vscode', shortcutOverrides: {} }
+    settings: { preserveOnRestart: true, shortcutProfile: 'vscode', shortcutOverrides: {}, fontSize: 14 }
   };
 }
 
@@ -212,7 +213,7 @@ export function deserializeSession(serialized: string): SessionState | undefined
   try {
     const parsed = JSON.parse(serialized) as SessionState;
     if (parsed?.version !== SESSION_VERSION || !Array.isArray(parsed.tabs) || !Array.isArray(parsed.groups)) return undefined;
-    parsed.settings = { preserveOnRestart: parsed.settings?.preserveOnRestart ?? true, shortcutProfile: parsed.settings?.shortcutProfile ?? 'vscode', shortcutOverrides: parsed.settings?.shortcutOverrides ?? {} };
+    parsed.settings = { preserveOnRestart: parsed.settings?.preserveOnRestart ?? true, shortcutProfile: parsed.settings?.shortcutProfile ?? 'vscode', shortcutOverrides: parsed.settings?.shortcutOverrides ?? {}, fontSize: parsed.settings?.fontSize ?? 14 };
     return parsed;
   } catch {
     return undefined;
