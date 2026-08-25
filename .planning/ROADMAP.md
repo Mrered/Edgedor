@@ -21,6 +21,7 @@ Edgedor 以六个可运行的垂直 MVP 阶段交付：先验证 Tauri 与原生
 
 ### Phase 1: 基础与原生面板 Spike
 **Goal**: 用户可以在 Apple Silicon 的最新版 macOS 上安装并启动一个单实例、单窗口的 Edgedor 基础工作台。
+**Mode:** mvp
 **Depends on**: Nothing (first phase)
 **Requirements**: FOUND-01, FOUND-02, FOUND-03, FOUND-04
 **Success Criteria** (what must be TRUE):
@@ -33,6 +34,7 @@ Edgedor 以六个可运行的垂直 MVP 阶段交付：先验证 Tauri 与原生
 
 ### Phase 2: 边缘触发与工作台外壳
 **Goal**: 用户可以用精确修饰键在任意显示器边缘快速呼出并控制 Edgedor 面板，而不打断当前应用上下文。
+**Mode:** mvp
 **Depends on**: Phase 1
 **Requirements**: PANEL-01, PANEL-02, PANEL-03, PANEL-04, PANEL-05, PANEL-06, PANEL-07, PANEL-08, PANEL-09, PANEL-10
 **Success Criteria** (what must be TRUE):
@@ -46,6 +48,7 @@ Edgedor 以六个可运行的垂直 MVP 阶段交付：先验证 Tauri 与原生
 
 ### Phase 3: 编辑器快捷键与布局
 **Goal**: 用户可以在 Monaco 编辑器中使用熟悉的 VS Code 编辑区域行为、键位方案和工作台级命令。
+**Mode:** mvp
 **Depends on**: Phase 2
 **Requirements**: EDIT-01, EDIT-02, EDIT-03, EDIT-04, EDIT-05, EDIT-06, EDIT-07, EDIT-08, EDIT-09, EDIT-10, EDIT-11
 **Success Criteria** (what must be TRUE):
@@ -59,6 +62,7 @@ Edgedor 以六个可运行的垂直 MVP 阶段交付：先验证 Tauri 与原生
 
 ### Phase 4: 会话恢复与寿命
 **Goal**: 用户可以管理临时标签和编辑组，并在重启后恢复最近工作，同时让未访问内容按时自动消失。
+**Mode:** mvp
 **Depends on**: Phase 3
 **Requirements**: SESSION-01, SESSION-02, SESSION-03, SESSION-04, SESSION-05, SESSION-06, SESSION-07, SESSION-08, SESSION-09, SESSION-10
 **Success Criteria** (what must be TRUE):
@@ -72,6 +76,7 @@ Edgedor 以六个可运行的垂直 MVP 阶段交付：先验证 Tauri 与原生
 
 ### Phase 5: 文件与 Quick Look
 **Goal**: 用户可以安全地把主动选择的文件或剪贴板内容带入工作台，并明确控制真实文件写回。
+**Mode:** mvp
 **Depends on**: Phase 4
 **Requirements**: FILE-01, FILE-02, FILE-03, FILE-04, FILE-05, FILE-06, FILE-07, FILE-08, FILE-09, FILE-10, FILE-11
 **Success Criteria** (what must be TRUE):
@@ -85,6 +90,7 @@ Edgedor 以六个可运行的垂直 MVP 阶段交付：先验证 Tauri 与原生
 
 ### Phase 6: 打包、GitHub Actions 与更新
 **Goal**: 用户可以通过轻量系统入口使用 Edgedor，并从公开 Release 安全安装和更新 Apple Silicon 版本。
+**Mode:** mvp
 **Depends on**: Phase 5
 **Requirements**: DIST-01, DIST-02, DIST-03, DIST-04, DIST-05, DIST-06, DIST-07
 **Success Criteria** (what must be TRUE):
