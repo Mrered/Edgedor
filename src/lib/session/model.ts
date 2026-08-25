@@ -24,6 +24,7 @@ export interface SessionTab {
   encoding?: string;
   lineEnding?: '\n' | '\r\n' | '\r';
   readOnly: boolean;
+  dirty?: boolean;
   previewDataUrl?: string;
   previewMime?: string;
   manuallyNamed: boolean;
@@ -54,6 +55,7 @@ export interface SessionSettings {
   shortcutOverrides: Record<string, string>;
   fontSize: number;
   showMenuBarIcon: boolean;
+  edgeModifier: 'command' | 'option' | 'control' | 'shift';
 }
 
 export interface SessionState {
@@ -75,6 +77,7 @@ export interface NewTabInput {
   encoding?: string;
   lineEnding?: SessionTab['lineEnding'];
   readOnly?: boolean;
+  dirty?: boolean;
   previewDataUrl?: string;
   previewMime?: string;
   now?: number;
@@ -109,6 +112,7 @@ export function createTab(input: NewTabInput = {}): SessionTab {
     encoding: input.encoding,
     lineEnding: input.lineEnding,
     readOnly: input.readOnly ?? kind === 'preview',
+    dirty: input.dirty ?? false,
     previewDataUrl: input.previewDataUrl,
     previewMime: input.previewMime,
     manuallyNamed: input.title !== undefined,
@@ -127,7 +131,7 @@ export function createSessionState(now = Date.now()): SessionState {
     groups: [group],
     activeGroupId: group.id,
     undoSlots: [],
-    settings: { preserveOnRestart: true, shortcutProfile: 'vscode', shortcutOverrides: {}, fontSize: 14, showMenuBarIcon: true }
+    settings: { preserveOnRestart: true, shortcutProfile: 'vscode', shortcutOverrides: {}, fontSize: 14, showMenuBarIcon: true, edgeModifier: 'command' }
   };
 }
 
@@ -143,6 +147,35 @@ export function addTab(state: SessionState, tab: SessionTab, groupId = state.act
       : group),
     activeGroupId: targetGroup.id
   };
+}
+
+export function createGroup(state: SessionState, orientation: SplitOrientation = 'vertical', splitRatio = 0.5, id = newId()): SessionState {
+  const parentId = state.activeGroupId;
+  const clampedRatio = Math.max(0.2, Math.min(0.8, splitRatio));
+  const group: EditorGroup = { id, parentId, orientation, splitRatio: clampedRatio, tabIds: [], activeTabId: undefined };
+  return { ...state, groups: [...state.groups, group], activeGroupId: group.id };
+}
+
+export function removeGroup(state: SessionState, groupId: string): SessionState {
+  if (state.groups.length <= 1) return state;
+  const group = state.groups.find((candidate) => candidate.id === groupId);
+  if (!group) return state;
+  const fallback = state.groups.find((candidate) => candidate.id !== groupId);
+  if (!fallback) return state;
+  const movedTabs = state.tabs.map((tab) => tab.groupId === groupId ? { ...tab, groupId: fallback.id } : tab);
+  return {
+    ...state,
+    tabs: movedTabs,
+    groups: state.groups.filter((candidate) => candidate.id !== groupId).map((candidate) => candidate.id === fallback.id
+      ? { ...candidate, tabIds: [...candidate.tabIds, ...group.tabIds], activeTabId: candidate.activeTabId ?? group.activeTabId }
+      : candidate),
+    activeGroupId: state.activeGroupId === groupId ? fallback.id : state.activeGroupId
+  };
+}
+
+export function setGroupRatio(state: SessionState, groupId: string, splitRatio: number): SessionState {
+  const clampedRatio = Math.max(0.2, Math.min(0.8, splitRatio));
+  return { ...state, groups: state.groups.map((group) => group.id === groupId ? { ...group, splitRatio: clampedRatio } : group) };
 }
 
 export function focusTab(state: SessionState, tabId: string, now = Date.now()): SessionState {
@@ -164,6 +197,7 @@ export function updateTab(state: SessionState, tabId: string, patch: Partial<Ses
     tabs: state.tabs.map((tab) => {
       if (tab.id !== tabId) return tab;
       const next = { ...tab, ...patch, updatedAt: now };
+      if (patch.content !== undefined && tab.kind === 'file' && patch.dirty === undefined) next.dirty = patch.content !== tab.content;
       if (!next.manuallyNamed && (patch.content !== undefined || patch.language !== undefined)) {
         next.title = deriveTitle(next.content, next.language);
       }
@@ -220,7 +254,7 @@ export function deserializeSession(serialized: string): SessionState | undefined
   try {
     const parsed = JSON.parse(serialized) as SessionState;
     if (parsed?.version !== SESSION_VERSION || !Array.isArray(parsed.tabs) || !Array.isArray(parsed.groups)) return undefined;
-    parsed.settings = { preserveOnRestart: parsed.settings?.preserveOnRestart ?? true, shortcutProfile: parsed.settings?.shortcutProfile ?? 'vscode', shortcutOverrides: parsed.settings?.shortcutOverrides ?? {}, fontSize: parsed.settings?.fontSize ?? 14, showMenuBarIcon: parsed.settings?.showMenuBarIcon ?? true };
+    parsed.settings = { preserveOnRestart: parsed.settings?.preserveOnRestart ?? true, shortcutProfile: parsed.settings?.shortcutProfile ?? 'vscode', shortcutOverrides: parsed.settings?.shortcutOverrides ?? {}, fontSize: parsed.settings?.fontSize ?? 14, showMenuBarIcon: parsed.settings?.showMenuBarIcon ?? true, edgeModifier: parsed.settings?.edgeModifier ?? 'command' };
     return parsed;
   } catch {
     return undefined;

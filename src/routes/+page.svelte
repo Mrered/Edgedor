@@ -6,24 +6,44 @@
   import PreviewSurface from '../components/PreviewSurface.svelte';
   import ToolbarMount from '../components/ToolbarMount.svelte';
   import { listenPanelStatus, panelAction, type PanelStatus } from '../lib/tauri/panel';
-  import { addTab, closeTab, createSessionState, createTab, deserializeSession, expireTabs, focusTab, restoreLatest, serializeSession, updateTab, type SessionState, type SessionTab } from '../lib/session';
+  import { addTab, closeTab, createGroup, createSessionState, createTab, deserializeSession, expireTabs, focusTab, removeGroup, restoreLatest, serializeSession, setGroupRatio, updateTab, type EditorGroup, type SessionState, type SessionTab } from '../lib/session';
   let status: PanelStatus = { visible: true, focused: true, bridgeReady: false };
   let pinned = false;
   let session: SessionState = createSessionState();
   let activeTab: SessionTab | undefined;
   let unlisten: (() => void) | undefined;
   let expiryTimer: number | undefined;
+  let showSettings = false;
+  let notice = '';
+  let noticeTimer: number | undefined;
   $: activeTab = session.tabs.find((tab) => tab.id === session.groups.find((group) => group.id === session.activeGroupId)?.activeTabId);
   function persist(next: SessionState) { session = next; if (session.settings.preserveOnRestart) localStorage.setItem('edgedor.session', serializeSession(session)); }
   function newTab() { persist(addTab(session, createTab())); }
-  function closeActive() { if (activeTab) persist(closeTab(session, activeTab.id)); }
-  function restoreClosed() { persist(restoreLatest(session)); }
-  function editContent(content: string) { if (activeTab) persist(updateTab(session, activeTab.id, { content })); }
+  function closeTabById(tabId: string) {
+    const tab = session.tabs.find((candidate) => candidate.id === tabId);
+    if (!tab) return;
+    persist(closeTab(session, tabId));
+    showNotice(`${tab.title} 已关闭，可用“撤销关闭”恢复`);
+  }
+  function closeActive() { if (activeTab) closeTabById(activeTab.id); }
+  function restoreClosed() {
+    const slot = session.undoSlots[0];
+    if (!slot) { showNotice('没有可撤销的关闭标签'); return; }
+    persist(restoreLatest(session));
+    showNotice(`${slot.tab.title} 已恢复${slot.reason === 'expired' ? '（原标签已超时）' : ''}`);
+  }
+  function showNotice(message: string) {
+    notice = message;
+    if (noticeTimer) window.clearTimeout(noticeTimer);
+    noticeTimer = window.setTimeout(() => { notice = ''; }, 4200);
+  }
+  function editContentFor(tabId: string, content: string) { persist(updateTab(session, tabId, { content })); }
+  function editContent(content: string) { if (activeTab) editContentFor(activeTab.id, content); }
   async function saveActive() {
     if (!activeTab) return;
     const path = activeTab.filePath ?? await save({ defaultPath: `${activeTab.title.replace(/[^\w.-]+/g, '-')}.txt`, filters: [{ name: '文本文件', extensions: ['txt', 'md', 'json', 'js', 'ts', 'rs', 'py'] }] });
     if (!path) return;
-    try { await invoke('save_file', { path, content: activeTab.content, encoding: activeTab.encoding ?? 'utf-8', line_ending: activeTab.lineEnding ?? '\n' }); persist(updateTab(session, activeTab.id, { filePath: path, kind: 'file' })); }
+    try { await invoke('save_file', { path, content: activeTab.content, encoding: activeTab.encoding ?? 'utf-8', line_ending: activeTab.lineEnding ?? '\n' }); persist(updateTab(session, activeTab.id, { filePath: path, kind: 'file', title: path.split('/').at(-1) ?? activeTab.title, manuallyNamed: true, dirty: false })); showNotice(`${path.split('/').at(-1) ?? '文件'} 已保存`); }
     catch (error) { window.alert(`保存失败：${String(error)}`); }
   }
   async function togglePinned() { pinned = !pinned; await invoke('set_panel_pinned', { pinned }); }
@@ -31,7 +51,34 @@
   function setNextMatchOverride(event: Event) { const value = (event.currentTarget as HTMLInputElement).value.trim(); const shortcutOverrides = { ...session.settings.shortcutOverrides }; if (value) shortcutOverrides.selectNextOccurrence = value; else delete shortcutOverrides.selectNextOccurrence; persist({ ...session, settings: { ...session.settings, shortcutOverrides } }); }
   function setPreserveOnRestart(event: Event) { const preserve = (event.currentTarget as HTMLInputElement).checked; const next = { ...session, settings: { ...session.settings, preserveOnRestart: preserve } }; session = next; if (preserve) localStorage.setItem('edgedor.session', serializeSession(next)); else localStorage.removeItem('edgedor.session'); }
   async function setMenuBarIcon(event: Event) { const visible = (event.currentTarget as HTMLInputElement).checked; persist({ ...session, settings: { ...session.settings, showMenuBarIcon: visible } }); await invoke('set_menu_bar_icon_visible', { visible }); }
+  async function setEdgeModifier(event: Event) {
+    const modifier = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['edgeModifier'];
+    persist({ ...session, settings: { ...session.settings, edgeModifier: modifier } });
+    try { await invoke('set_edge_modifier', { modifier }); showNotice(`边缘触发键已改为 ${modifier}`); }
+    catch { showNotice('设置已保存，原生边缘触发接口尚未连接'); }
+  }
   function changeFontSize(delta: number) { persist({ ...session, settings: { ...session.settings, fontSize: Math.max(10, Math.min(32, session.settings.fontSize + delta)) } }); }
+  function openSettings() { showSettings = true; }
+  function addSplit() {
+    const next = createGroup(session, 'vertical');
+    persist(addTab(next, createTab(), next.activeGroupId));
+  }
+  function closeSplit() {
+    if (session.groups.length <= 1) { showNotice('当前只有一个编辑分区'); return; }
+    persist(removeGroup(session, session.activeGroupId));
+  }
+  function groupTab(group: EditorGroup) { return session.tabs.find((tab) => tab.id === group.activeTabId); }
+  function splitRatio() { return session.groups.find((group) => group.parentId)?.splitRatio ?? 0.5; }
+  function setSplitRatio(event: Event) {
+    const group = session.groups.find((candidate) => candidate.parentId);
+    if (!group) return;
+    persist(setGroupRatio(session, group.id, Number((event.currentTarget as HTMLInputElement).value)));
+  }
+  function groupStyle(index: number) {
+    if (session.groups.length !== 2) return '';
+    const ratio = splitRatio();
+    return `flex: ${index === 0 ? 1 - ratio : ratio};`;
+  }
   async function openTextFile() {
     const path = await open({ multiple: false, directory: false });
     if (!path) return;
@@ -59,7 +106,7 @@
     const saved = deserializeSession(localStorage.getItem('edgedor.session') ?? '');
     session = saved ?? addTab(session, createTab());
     void invoke('set_menu_bar_icon_visible', { visible: session.settings.showMenuBarIcon });
-    expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) persist(result.state); }, 60_000);
+    expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) { persist(result.state); showNotice(`${result.expired.length} 个未访问标签已超时，已放入撤销槽`); } }, 60_000);
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void saveActive(); }
       if ((event.metaKey || event.ctrlKey) && (event.key === '+' || event.key === '=')) { event.preventDefault(); changeFontSize(1); }
@@ -81,10 +128,55 @@
 </script>
 <svelte:head><title>Edgedor</title></svelte:head>
 <main class="shell">
-  <ToolbarMount /><div class="controls"><button onclick={openTextFile}>打开文本</button><button onclick={openPreviewFile}>预览文件</button><select aria-label="编辑器快捷键方案" value={session.settings.shortcutProfile} onchange={setShortcutProfile}><option value="vscode">VS Code</option><option value="sublime">Sublime Text</option><option value="jetbrains">JetBrains</option><option value="vim">Vim</option></select><input class="shortcut-override" aria-label="逐个选择相同内容快捷键" placeholder="逐个选择：Cmd+D" value={session.settings.shortcutOverrides.selectNextOccurrence ?? ''} onchange={setNextMatchOverride} /><label><input type="checkbox" checked={session.settings.preserveOnRestart} onchange={setPreserveOnRestart} />重启保留</label><label><input type="checkbox" checked={session.settings.showMenuBarIcon} onchange={setMenuBarIcon} />菜单栏图标</label><button class="pin" aria-pressed={pinned} onclick={togglePinned}>{pinned ? '取消固定' : '固定面板'}</button></div>
-  <nav class="tabs" aria-label="编辑标签"><button class="add" onclick={newTab}>＋</button>{#each session.tabs as tab (tab.id)}<button class:active={tab.id === activeTab?.id} onclick={() => persist(focusTab(session, tab.id))}>{tab.title}</button>{/each}<button class="close" onclick={closeActive}>×</button><button class="restore" onclick={restoreClosed}>撤销关闭</button></nav>
-  <section class="workspace" aria-label="临时编辑区">{#if activeTab}{#if activeTab.kind === 'preview'}<PreviewSurface dataUrl={activeTab.previewDataUrl ?? activeTab.content} mime={activeTab.previewMime ?? 'application/octet-stream'} />{:else}{#key `${activeTab.id}:${session.settings.fontSize}:${session.settings.shortcutProfile}`}<EditorSurface tab={activeTab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} onChange={editContent} />{/key}{/if}{:else}<button class="empty" onclick={newTab}>新建临时标签</button>{/if}</section>
-  <footer aria-live="polite">{status.bridgeReady ? '原生面板已连接' : '正在连接原生面板…'} · {session.tabs.length} 个标签</footer>
+  <ToolbarMount />
+  <header class="toolbar" aria-label="工作台工具栏">
+    <button onclick={newTab} title="新建临时标签">＋ 新建</button>
+    <button onclick={openTextFile}>打开文本</button>
+    <button onclick={openPreviewFile}>预览文件</button>
+    <button onclick={addSplit} title="新建编辑分区">分区</button>
+    <button onclick={closeSplit} disabled={session.groups.length <= 1} title="合并当前编辑分区">合并</button>
+    <span class="toolbar-spacer"></span>
+    <button onclick={openSettings} aria-haspopup="dialog">设置</button>
+    <button class="pin" aria-pressed={pinned} onclick={togglePinned}>{pinned ? '取消固定' : '固定面板'}</button>
+  </header>
+  <nav class="tabs" aria-label="编辑标签">
+    {#each session.tabs as tab (tab.id)}
+      <div class:active={tab.id === activeTab?.id} class="tab-wrap">
+        <button class="tab" onclick={() => persist(focusTab(session, tab.id))} title={tab.filePath ?? tab.title}>{tab.dirty ? '● ' : ''}{tab.title}{tab.kind === 'preview' ? ' · 预览' : ''}</button>
+        <button class="tab-close" aria-label={`关闭 ${tab.title}`} onclick={(event) => { event.stopPropagation(); closeTabById(tab.id); }}>×</button>
+      </div>
+    {/each}
+    {#if session.tabs.length === 0}<button class="empty-tab" onclick={newTab}>新建临时标签</button>{/if}
+    <button class="restore" onclick={restoreClosed} disabled={session.undoSlots.length === 0} title={session.undoSlots[0] ? `${session.undoSlots[0].tab.title} · ${session.undoSlots[0].reason === 'expired' ? '超时' : '关闭'}` : '没有撤销记录'}>撤销关闭{session.undoSlots.length ? ` (${session.undoSlots.length})` : ''}</button>
+  </nav>
+  <section class:split-workspace={session.groups.length > 1} class="workspace" aria-label="临时编辑区">
+    {#each session.groups as group (group.id)}
+      {@const tab = groupTab(group)}
+      <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={`编辑分区 ${group.id}`}>
+        {#if tab}
+          {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} />{:else}{#key `${tab.id}:${session.settings.fontSize}:${session.settings.shortcutProfile}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} onChange={(content) => editContentFor(tab.id, content)} />{/key}{/if}
+        {:else}<button class="empty" onclick={() => { const next = addTab(session, createTab(), group.id); persist(next); }}>新建分区标签</button>{/if}
+      </section>
+    {/each}
+  </section>
+  {#if notice}<div class="notice" role="status">{notice}</div>{/if}
+  <footer aria-live="polite">{status.bridgeReady ? '原生面板已连接' : '正在连接原生面板…'} · {session.tabs.length} 个标签 · 撤销槽 {session.undoSlots.length}/10</footer>
+  {#if showSettings}
+    <div class="settings-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) showSettings = false; }}>
+      <aside class="settings-panel" role="dialog" aria-modal="true" aria-label="Edgedor 设置">
+        <div class="settings-heading"><h2>设置</h2><button aria-label="关闭设置" onclick={() => showSettings = false}>×</button></div>
+        <label>编辑器快捷键方案<select aria-label="编辑器快捷键方案" value={session.settings.shortcutProfile} onchange={setShortcutProfile}><option value="vscode">VS Code</option><option value="sublime">Sublime Text</option><option value="jetbrains">JetBrains</option><option value="vim">Vim（编辑区）</option></select></label>
+        <label>边缘呼出修饰键<select aria-label="边缘呼出修饰键" value={session.settings.edgeModifier} onchange={setEdgeModifier}><option value="command">Command（⌘）</option><option value="option">Option（⌥）</option><option value="control">Control（⌃）</option><option value="shift">Shift（⇧）</option></select></label>
+        {#if session.groups.length === 2}<label>分区比例 <input aria-label="分区比例" type="range" min="0.2" max="0.8" step="0.05" value={splitRatio()} oninput={setSplitRatio} /></label>{/if}
+        <label>逐个选择相同内容快捷键<input aria-label="逐个选择相同内容快捷键" placeholder="例如 Cmd+D" value={session.settings.shortcutOverrides.selectNextOccurrence ?? ''} onchange={setNextMatchOverride} /></label>
+        <label>编辑器字号 <span class="font-controls"><button onclick={() => changeFontSize(-1)}>−</button><output>{session.settings.fontSize}px</output><button onclick={() => changeFontSize(1)}>＋</button></span></label>
+        <label class="checkbox"><input type="checkbox" checked={session.settings.preserveOnRestart} onchange={setPreserveOnRestart} />重启后恢复最后工作状态</label>
+        <label class="checkbox"><input type="checkbox" checked={session.settings.showMenuBarIcon} onchange={setMenuBarIcon} />显示菜单栏图标</label>
+        <p class="settings-note">临时标签 24 小时未访问会过期，并进入可撤销槽。文件只有触发保存时才写回原路径。</p>
+        <button class="done" onclick={() => showSettings = false}>完成</button>
+      </aside>
+    </div>
+  {/if}
 </main>
 <style>
   :global(*) { box-sizing: border-box; }
@@ -93,17 +185,36 @@
   :global(:root) { color-scheme: light dark; --text: #1d1d1f; --muted: #6e6e73; --panel: rgba(255,255,255,.88); }
   @media (prefers-color-scheme: dark) { :global(:root) { --text: #f5f5f7; --muted: #a1a1a6; --panel: rgba(30,30,32,.92); } }
   .shell { height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: var(--panel); }
-  .tabs { display: flex; align-items: center; gap: 4px; padding: 0 10px 8px; overflow-x: auto; }
+  .toolbar { display: flex; align-items: center; gap: 5px; padding: 8px 12px 4px; }
+  .toolbar button, .settings-panel button { border: 0; border-radius: 7px; padding: 5px 9px; color: var(--muted); background: color-mix(in srgb, var(--text) 7%, transparent); font-size: 11px; }
+  .toolbar button:hover, .settings-panel button:hover, .tab-close:hover { color: var(--text); background: color-mix(in srgb, var(--text) 14%, transparent); }
+  .toolbar button:disabled { opacity: .4; }
+  .toolbar-spacer { flex: 1; }
+  .tabs { display: flex; align-items: center; gap: 3px; padding: 0 10px 8px; overflow-x: auto; }
+  .tab-wrap { display: flex; align-items: center; border-radius: 7px; background: transparent; }
+  .tab-wrap.active { background: color-mix(in srgb, var(--text) 12%, transparent); }
+  .tab, .tab-close { border: 0; background: transparent; color: var(--muted); white-space: nowrap; }
+  .tab { padding: 5px 3px 5px 9px; }
+  .tab-close { padding: 4px 6px 4px 2px; border-radius: 5px; }
   .pin { align-self: flex-end; margin: -4px 12px 6px; border: 0; border-radius: 6px; padding: 4px 8px; color: var(--muted); background: transparent; font-size: 11px; }
-  .controls { display: flex; justify-content: flex-end; align-items: center; gap: 6px; padding: 0 12px 4px; }
-  .controls select { border: 0; border-radius: 6px; padding: 4px 6px; color: var(--muted); background: transparent; font-size: 11px; }
-  .shortcut-override { width: 105px; border: 0; border-radius: 6px; padding: 4px 6px; color: var(--muted); background: color-mix(in srgb, var(--text) 6%, transparent); font-size: 11px; }
-  .controls label { color: var(--muted); font-size: 11px; }
-  .tabs button { border: 0; border-radius: 7px; padding: 5px 9px; background: transparent; color: var(--muted); white-space: nowrap; }
-  .tabs button.active { color: var(--text); background: color-mix(in srgb, var(--text) 12%, transparent); }
-  .tabs .add, .tabs .close { font-size: 18px; padding-inline: 7px; }
   .tabs .restore { margin-left: auto; font-size: 11px; }
+  .empty-tab { border: 0; border-radius: 7px; padding: 5px 9px; color: var(--muted); background: transparent; }
   .workspace { min-height: 0; flex: 1; display: flex; }
+  .split-workspace { gap: 1px; background: color-mix(in srgb, var(--text) 12%, transparent); }
+  .editor-group { min-width: 0; min-height: 0; flex: 1; display: flex; background: var(--panel); }
   .empty { margin: auto; border: 0; border-radius: 8px; padding: 10px 14px; }
+  .notice { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 7px 12px; border-radius: 9px; color: var(--text); background: color-mix(in srgb, var(--panel) 88%, var(--text)); box-shadow: 0 5px 25px rgba(0,0,0,.18); font-size: 12px; }
   footer { padding: 6px 16px 10px; font-size: 11px; color: var(--muted); }
+  .settings-backdrop { position: fixed; inset: 0; z-index: 10; display: flex; justify-content: flex-end; background: rgba(0,0,0,.16); }
+  .settings-panel { width: min(360px, 90vw); height: 100%; padding: 20px; display: flex; flex-direction: column; gap: 16px; color: var(--text); background: var(--panel); box-shadow: -10px 0 30px rgba(0,0,0,.15); }
+  .settings-heading { display: flex; align-items: center; justify-content: space-between; }
+  .settings-heading h2 { margin: 0; font-size: 18px; }
+  .settings-heading button { padding: 2px 8px; font-size: 20px; }
+  .settings-panel label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
+  .settings-panel select, .settings-panel input:not([type="checkbox"]) { border: 1px solid color-mix(in srgb, var(--text) 15%, transparent); border-radius: 7px; padding: 7px; color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
+  .settings-panel .checkbox { flex-direction: row; align-items: center; }
+  .font-controls { display: flex; align-items: center; gap: 8px; }
+  .font-controls output { min-width: 44px; text-align: center; color: var(--text); }
+  .settings-note { margin: auto 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+  .settings-panel .done { width: 100%; padding: 8px; color: var(--text); }
 </style>
