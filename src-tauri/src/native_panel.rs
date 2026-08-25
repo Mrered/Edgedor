@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use objc2::runtime::AnyObject;
 use objc2::{sel, MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSAutoresizingMaskOptions, NSBackingStoreType, NSEvent, NSEventMask, NSEventModifierFlags, NSMenu, NSMenuItem, NSPanel, NSStatusBar, NSView, NSWindowStyleMask, NSFloatingWindowLevel, NSScreen};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSAutoresizingMaskOptions, NSBackingStoreType, NSEvent, NSEventMask, NSEventModifierFlags, NSMenu, NSMenuItem, NSPanel, NSStatusBar, NSView, NSWindowStyleMask, NSWindowTitleVisibility, NSFloatingWindowLevel, NSScreen};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
@@ -150,7 +150,7 @@ impl NativePanel {
             return Ok(panel);
         }
         let marker = MainThreadMarker::new().ok_or("NSPanel must be created on the main thread")?;
-        let style = NSWindowStyleMask::Borderless | NSWindowStyleMask::Resizable;
+        let style = NSWindowStyleMask::Titled | NSWindowStyleMask::FullSizeContentView | NSWindowStyleMask::Resizable;
         let panel = unsafe {
             NSPanel::initWithContentRect_styleMask_backing_defer(
                 NSPanel::alloc(marker),
@@ -160,6 +160,9 @@ impl NativePanel {
                 false,
             )
         };
+        panel.setTitleVisibility(NSWindowTitleVisibility::Hidden);
+        panel.setTitlebarAppearsTransparent(true);
+        panel.setBecomesKeyOnlyIfNeeded(false);
         panel.setFloatingPanel(true);
         panel.setHidesOnDeactivate(!*self.pinned.lock().map_err(|_| "native panel state unavailable")?);
         panel.setLevel(NSFloatingWindowLevel);
