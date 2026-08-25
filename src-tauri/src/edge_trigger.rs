@@ -5,7 +5,7 @@
 //! the application main thread; the returned monitor token is retained until
 //! [`EdgeTrigger::stop`] or process exit.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use block2::RcBlock;
@@ -50,12 +50,14 @@ struct TriggerState {
 
 pub struct EdgeTrigger {
     monitor: Mutex<Option<usize>>,
+    epoch: Arc<AtomicU64>,
 }
 
 impl Default for EdgeTrigger {
     fn default() -> Self {
         Self {
             monitor: Mutex::new(None),
+            epoch: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -71,6 +73,8 @@ impl EdgeTrigger {
         if config.modifier.is_empty() {
             return Err("edge trigger modifier cannot be empty".to_string());
         }
+        let run_id = self.epoch.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        let epoch = Arc::clone(&self.epoch);
         let mut monitor = self
             .monitor
             .lock()
@@ -111,6 +115,7 @@ impl EdgeTrigger {
                 state.fired = false;
                 let timer_state = Arc::clone(&block_state);
                 let timer_callback = Arc::clone(&block_callback);
+                let timer_epoch = Arc::clone(&epoch);
                 let timer_edge = edge;
                 let timer_delay = config.hold_duration;
                 if let Ok(delay) = i64::try_from(timer_delay.as_nanos()) {
@@ -121,7 +126,8 @@ impl EdgeTrigger {
                                 Ok(state) => state,
                                 Err(_) => return,
                             };
-                            if state.edge == Some(timer_edge)
+                            if timer_epoch.load(Ordering::Acquire) == run_id
+                                && state.edge == Some(timer_edge)
                                 && !state.fired
                                 && state.edge_since.is_some_and(|since| since.elapsed() >= timer_delay)
                             {
@@ -161,11 +167,23 @@ impl EdgeTrigger {
             return;
         };
         let Some(pointer) = monitor.take() else {
+            self.epoch.fetch_add(1, Ordering::AcqRel);
             return;
         };
+        self.epoch.fetch_add(1, Ordering::AcqRel);
         let token = unsafe { &*(pointer as *const AnyObject) };
         unsafe { NSEvent::removeMonitor(token) };
         unsafe { drop(Retained::from_raw(pointer as *mut AnyObject)) };
+    }
+}
+
+pub fn modifier_flags(name: &str) -> Result<NSEventModifierFlags, String> {
+    match name.trim().to_ascii_lowercase().as_str() {
+        "command" | "cmd" => Ok(NSEventModifierFlags::Command),
+        "option" | "alt" => Ok(NSEventModifierFlags::Option),
+        "control" | "ctrl" => Ok(NSEventModifierFlags::Control),
+        "shift" => Ok(NSEventModifierFlags::Shift),
+        _ => Err("unsupported edge modifier; use command, option, control, or shift".to_string()),
     }
 }
 

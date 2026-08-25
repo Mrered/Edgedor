@@ -9,20 +9,33 @@ use std::sync::{Arc, Mutex};
 
 use objc2::runtime::AnyObject;
 use objc2::{MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSEvent, NSEventMask, NSPanel, NSStatusBar, NSView, NSWindowStyleMask, NSFloatingWindowLevel, NSScreen};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSEvent, NSEventMask, NSEventModifierFlags, NSPanel, NSStatusBar, NSView, NSWindowStyleMask, NSFloatingWindowLevel, NSScreen};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 #[path = "edge_trigger.rs"]
 pub mod edge_trigger;
 
-#[derive(Default)]
 pub struct NativePanel {
     panel: Mutex<Option<usize>>,
     trigger: edge_trigger::EdgeTrigger,
+    edge_modifier: Mutex<NSEventModifierFlags>,
     pinned: Arc<Mutex<bool>>,
     status_item: Mutex<Option<usize>>,
     dismiss_monitor: Mutex<Option<usize>>,
+}
+
+impl Default for NativePanel {
+    fn default() -> Self {
+        Self {
+            panel: Mutex::new(None),
+            trigger: edge_trigger::EdgeTrigger::default(),
+            edge_modifier: Mutex::new(NSEventModifierFlags::Command),
+            pinned: Arc::new(Mutex::new(false)),
+            status_item: Mutex::new(None),
+            dismiss_monitor: Mutex::new(None),
+        }
+    }
 }
 
 impl NativePanel {
@@ -53,9 +66,17 @@ impl NativePanel {
 
     pub fn start_edge_trigger(&self, app: &AppHandle) -> Result<(), String> {
         let app = app.clone();
-        self.trigger.start(edge_trigger::EdgeTriggerConfig::default(), move |_edge| {
+        let modifier = *self.edge_modifier.lock().map_err(|_| "edge modifier state unavailable")?;
+        self.trigger.start(edge_trigger::EdgeTriggerConfig { modifier, ..Default::default() }, move |_edge| {
             if let Some(panel) = app.try_state::<NativePanel>() { let _ = panel.show_at_edge(_edge); }
         })
+    }
+
+    pub fn set_edge_modifier(&self, modifier: &str, app: &AppHandle) -> Result<(), String> {
+        let flags = edge_trigger::modifier_flags(modifier)?;
+        *self.edge_modifier.lock().map_err(|_| "edge modifier state unavailable")? = flags;
+        self.trigger.stop();
+        self.start_edge_trigger(app)
     }
 
     pub fn show_at_edge(&self, edge: edge_trigger::Edge) -> Result<(), String> {
