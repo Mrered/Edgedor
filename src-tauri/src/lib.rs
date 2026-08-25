@@ -43,6 +43,10 @@ pub fn run() {
     let builder = builder.manage(native_panel::NativePanel::default());
     builder
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            #[cfg(target_os = "macos")]
+            if let Some(panel) = app.try_state::<native_panel::NativePanel>() {
+                let _ = panel.action("show");
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -56,6 +60,11 @@ pub fn run() {
                 let panel = app.state::<native_panel::NativePanel>();
                 native_panel::attach_from_setup(app.handle(), &panel)
                     .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+            }
+            let state = app.state::<PanelState>();
+            if let Ok(mut status) = state.0.lock() {
+                status.bridge_ready = true;
+                let _ = app.emit("panel_status", status.clone());
             }
             Ok(())
         })
