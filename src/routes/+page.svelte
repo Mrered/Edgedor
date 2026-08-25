@@ -58,7 +58,7 @@
     try { await invoke('save_file', { path, content: activeTab.content, encoding: activeTab.encoding ?? 'utf-8', line_ending: activeTab.lineEnding ?? '\n' }); persist(updateTab(session, activeTab.id, { filePath: path, kind: 'file', title: path.split('/').at(-1) ?? activeTab.title, manuallyNamed: true, dirty: false })); showNotice(`${path.split('/').at(-1) ?? '文件'} 已保存`); }
     catch (error) { window.alert(`保存失败：${String(error)}`); }
   }
-  async function togglePinned() { pinned = !pinned; await invoke('set_panel_pinned', { pinned }); }
+  async function togglePinned() { pinned = !pinned; persist({ ...session, settings: { ...session.settings, pinned } }); await invoke('set_panel_pinned', { pinned }); }
   function setShortcutProfile(event: Event) { const value = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['shortcutProfile']; persist({ ...session, settings: { ...session.settings, shortcutProfile: value } }); }
   function setShortcutOverride(command: EditorCommand, event: Event) { const value = (event.currentTarget as HTMLInputElement).value.trim(); const shortcutOverrides = { ...session.settings.shortcutOverrides }; if (value) shortcutOverrides[command] = value; else delete shortcutOverrides[command]; persist({ ...session, settings: { ...session.settings, shortcutOverrides } }); }
   function setPreserveOnRestart(event: Event) { const preserve = (event.currentTarget as HTMLInputElement).checked; const next = { ...session, settings: { ...session.settings, preserveOnRestart: preserve } }; session = next; if (preserve) localStorage.setItem('edgedor.session', serializeSession(next)); else localStorage.removeItem('edgedor.session'); }
@@ -123,7 +123,9 @@
     const restored = saved ?? addTab(session, createTab());
     const restoredActiveTabId = restored.groups.find((group) => group.id === restored.activeGroupId)?.activeTabId;
     session = restoredActiveTabId ? focusTab(restored, restoredActiveTabId) : restored;
+    pinned = session.settings.pinned;
     void invoke('set_menu_bar_icon_visible', { visible: session.settings.showMenuBarIcon });
+    void invoke('set_panel_pinned', { pinned });
     void invoke('set_edge_modifier', { modifier: session.settings.edgeModifier });
     expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) { persist(result.state); showNotice(`${result.expired.length} 个未访问标签已超时，已放入撤销槽`); } }, 60_000);
     const onKeyDown = (event: KeyboardEvent) => {
