@@ -29,7 +29,9 @@ Edgedor 以六个可运行的垂直 MVP 阶段交付：先验证 Tauri 与原生
   2. 重复打开应用或通过第二个入口时，系统只保留一个应用实例和一个侧边窗口。
   3. 界面随 macOS 系统语言在简体中文和英文之间切换，外观随浅色/深色模式变化且编辑区保持高对比可读。
   4. 原生面板桥接 Spike 在目标 macOS 26 机器上可显示、聚焦并从 Tauri/Svelte 工作台收发基本状态。
-**Plans**: TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 01-PLAN.md — 建立 Tauri/Svelte/Monaco Walking Skeleton，接入单实例 NSPanel bridge 并验证 arm64 开发产物
 **UI hint**: yes
 
 ### Phase 2: 边缘触发与工作台外壳
