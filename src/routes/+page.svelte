@@ -69,7 +69,7 @@
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 'w') { event.preventDefault(); closeActive(); }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 't') { event.preventDefault(); restoreClosed(); }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'q') { event.preventDefault(); void invoke('quit_app'); }
-      if ((event.metaKey || event.ctrlKey) && event.key === ',') { event.preventDefault(); document.querySelector('select[aria-label="编辑器快捷键方案"]')?.focus(); }
+      if ((event.metaKey || event.ctrlKey) && event.key === ',') { event.preventDefault(); (document.querySelector('select[aria-label="编辑器快捷键方案"]') as HTMLSelectElement | null)?.focus(); }
     };
     window.addEventListener('keydown', onKeyDown);
     const onDragOver = (event: DragEvent) => event.preventDefault();
