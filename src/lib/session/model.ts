@@ -228,7 +228,7 @@ export interface ExpiryResult { state: SessionState; expired: SessionTab[]; }
 
 export function expireTabs(state: SessionState, now = Date.now()): ExpiryResult {
   const expired = state.tabs
-    .filter((tab) => now - tab.lastFocusedAt >= TAB_EXPIRY_MS)
+    .filter((tab) => tab.kind === 'temporary' && now - tab.lastFocusedAt >= TAB_EXPIRY_MS)
     .sort((first, second) => second.lastFocusedAt - first.lastFocusedAt);
   return expired.reduce((result, tab) => ({ state: closeTab(result.state, tab.id, now, 'expired'), expired: [...result.expired, tab] }), { state, expired: [] } as ExpiryResult);
 }
@@ -238,10 +238,12 @@ export function restoreLatest(state: SessionState): SessionState {
   if (!slot) return state;
   const group = state.groups.find((candidate) => candidate.id === slot.tab.groupId) ?? state.groups[0];
   if (!group || state.tabs.some((tab) => tab.id === slot.tab.id)) return state;
-  return {
-    ...addTab(state, slot.tab, group.id),
+  const now = Date.now();
+  const restoredTab = { ...slot.tab, groupId: group.id, lastFocusedAt: now, updatedAt: now };
+  return focusTab({
+    ...addTab(state, restoredTab, group.id),
     undoSlots: state.undoSlots.slice(1)
-  };
+  }, restoredTab.id, now);
 }
 
 export function pruneExpired(state: SessionState, now = Date.now()): SessionState {
@@ -249,7 +251,10 @@ export function pruneExpired(state: SessionState, now = Date.now()): SessionStat
 }
 
 export function serializeSession(state: SessionState): string {
-  return JSON.stringify({ ...state, version: SESSION_VERSION });
+  const tabs = state.tabs.map((tab) => tab.kind === 'preview'
+    ? { ...tab, content: '', previewDataUrl: undefined }
+    : tab);
+  return JSON.stringify({ ...state, tabs, version: SESSION_VERSION });
 }
 
 export function deserializeSession(serialized: string): SessionState | undefined {

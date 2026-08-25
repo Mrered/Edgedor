@@ -28,7 +28,7 @@
     { id: 'toggleComment', label: '切换行注释' }
   ];
   $: activeTab = session.tabs.find((tab) => tab.id === session.groups.find((group) => group.id === session.activeGroupId)?.activeTabId);
-  function persist(next: SessionState) { session = next; if (session.settings.preserveOnRestart) localStorage.setItem('edgedor.session', serializeSession(session)); }
+  function persist(next: SessionState) { session = next; if (session.settings.preserveOnRestart) localStorage.setItem('edgedor.session', serializeSession(session)); else localStorage.removeItem('edgedor.session'); }
   function newTab() { persist(addTab(session, createTab())); }
   function closeTabById(tabId: string) {
     const tab = session.tabs.find((candidate) => candidate.id === tabId);
@@ -106,6 +106,19 @@
     const preview = await invoke<{ path: string; data_url: string; mime: string }>('preview_file', { path });
     persist(addTab(session, createTab({ kind: 'preview', filePath: preview.path, content: preview.data_url, language: 'preview', title: title ?? path.split('/').at(-1), readOnly: true, previewDataUrl: preview.data_url, previewMime: preview.mime })));
   }
+  async function rehydratePreviews(next: SessionState) {
+    const previews = next.tabs.filter((tab) => tab.kind === 'preview' && tab.filePath);
+    for (const tab of previews) {
+      try {
+        const preview = await invoke<{ path: string; data_url: string; mime: string }>('preview_file', { path: tab.filePath });
+        next = updateTab(next, tab.id, { content: preview.data_url, previewDataUrl: preview.data_url, previewMime: preview.mime, readOnly: true });
+      } catch {
+        next = closeTab(next, tab.id, Date.now(), 'closed');
+        showNotice(`${tab.title} 无法恢复，已关闭`);
+      }
+    }
+    if (next !== session) persist(next);
+  }
   async function openPath(path: string, title?: string) {
     if (isPreviewPath(path)) {
       try { await addPreviewPath(path, title); } catch (error) { window.alert(`不支持预览此文件：${String(error)}`); }
@@ -140,9 +153,11 @@
   }
   onMount(() => {
     const saved = deserializeSession(localStorage.getItem('edgedor.session') ?? '');
-    const restored = saved ?? addTab(session, createTab());
+    if (saved && !saved.settings.preserveOnRestart) localStorage.removeItem('edgedor.session');
+    const restored = saved?.settings.preserveOnRestart ? saved : addTab(session, createTab());
     const restoredActiveTabId = restored.groups.find((group) => group.id === restored.activeGroupId)?.activeTabId;
     session = restoredActiveTabId ? focusTab(restored, restoredActiveTabId) : restored;
+    void rehydratePreviews(session);
     pinned = session.settings.pinned;
     void invoke('set_menu_bar_icon_visible', { visible: session.settings.showMenuBarIcon });
     void invoke('set_panel_pinned', { pinned });

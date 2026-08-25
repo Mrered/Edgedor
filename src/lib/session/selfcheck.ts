@@ -28,6 +28,15 @@ assert(expired.expired.length === 1 && expired.state.tabs.length === 0, 'expires
 assert(expired.state.undoSlots.length === 1 && expired.state.undoSlots[0]?.reason === 'expired', 'pushes expired tab into undo slot');
 state = restoreLatest(expired.state);
 assert(state.tabs.length === 1 && state.undoSlots.length === 0, 'restores latest undo slot');
+assert((state.tabs[0]?.lastFocusedAt ?? 0) > start + TAB_EXPIRY_MS, 'refreshes restored tab lifetime');
+const fileTab = createTab({ id: 'file-1', kind: 'file', filePath: '/tmp/example.ts', now: start });
+state = addTab(state, fileTab);
+const withFile = expireTabs(state, start + TAB_EXPIRY_MS + 1);
+assert(withFile.state.tabs.some((candidate) => candidate.id === fileTab.id), 'keeps file tabs out of temporary expiry');
+const previewTab = createTab({ id: 'preview-1', kind: 'preview', filePath: '/tmp/example.pdf', content: 'data:application/pdf;base64,very-large-data', previewDataUrl: 'data:application/pdf;base64,very-large-data', now: start });
+const serializedPreview = JSON.parse(serializeSession(addTab(state, previewTab))) as { tabs: Array<{ id: string; content: string; previewDataUrl?: string }> };
+const persistedPreview = serializedPreview.tabs.find((candidate) => candidate.id === previewTab.id);
+assert(persistedPreview?.content === '' && persistedPreview.previewDataUrl === undefined, 'does not persist preview payload');
 for (let index = 0; index < MAX_UNDO_SLOTS + 2; index += 1) {
   const extraTab = createTab({ id: `extra-${index}`, now: start });
   state = addTab(state, extraTab);
