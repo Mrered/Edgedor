@@ -95,27 +95,41 @@
     const ratio = splitRatio();
     return `flex: ${index === 0 ? 1 - ratio : ratio};`;
   }
+  function isPreviewPath(path: string) { return /\.(png|jpe?g|gif|webp|pdf)$/i.test(path); }
+  async function addPreviewPath(path: string, title?: string) {
+    const preview = await invoke<{ path: string; data_url: string; mime: string }>('preview_file', { path });
+    persist(addTab(session, createTab({ kind: 'preview', filePath: preview.path, content: preview.data_url, language: 'preview', title: title ?? path.split('/').at(-1), readOnly: true, previewDataUrl: preview.data_url, previewMime: preview.mime })));
+  }
+  async function openPath(path: string, title?: string) {
+    if (isPreviewPath(path)) {
+      try { await addPreviewPath(path, title); } catch (error) { window.alert(`不支持预览此文件：${String(error)}`); }
+      return;
+    }
+    try {
+      const opened = await invoke<{ path: string; content: string; language: string; encoding: string; line_ending: '\n' | '\r\n' | '\r' }>('open_text_file', { path });
+      persist(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, encoding: opened.encoding, lineEnding: opened.line_ending, title: title ?? path.split('/').at(-1) })));
+    } catch (textError) {
+      try { await addPreviewPath(path, title); } catch { window.alert(`不支持打开此文件：${String(textError)}`); }
+    }
+  }
   async function openTextFile() {
     const path = await open({ multiple: false, directory: false });
     if (!path) return;
     const selectedPath = Array.isArray(path) ? path[0] : path;
     if (!selectedPath) return;
-    try { const opened = await invoke<{ path: string; content: string; language: string; encoding: string; line_ending: '\n' | '\r\n' | '\r' }>('open_text_file', { path: selectedPath }); persist(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, encoding: opened.encoding, lineEnding: opened.line_ending, title: selectedPath.split('/').at(-1) }))); }
-    catch (error) { window.alert(String(error)); }
+    await openPath(selectedPath);
   }
   async function openPreviewFile() {
     const path = await open({ multiple: false, directory: false });
     const selectedPath = Array.isArray(path) ? path[0] : path;
     if (!selectedPath) return;
-    try { const preview = await invoke<{ path: string; data_url: string; mime: string }>('preview_file', { path: selectedPath }); persist(addTab(session, createTab({ kind: 'preview', filePath: preview.path, content: preview.data_url, language: 'preview', title: selectedPath.split('/').at(-1), readOnly: true, previewDataUrl: preview.data_url, previewMime: preview.mime }))); }
-    catch (error) { window.alert(String(error)); }
+    try { await addPreviewPath(selectedPath); } catch (error) { window.alert(`不支持预览此文件：${String(error)}`); }
   }
   async function openDroppedFile(event: DragEvent) {
     event.preventDefault();
     const file = event.dataTransfer?.files?.[0] as (File & { path?: string }) | undefined;
     if (file?.path) {
-      try { const opened = await invoke<{ path: string; content: string; language: string; encoding: string; line_ending: '\n' | '\r\n' | '\r' }>('open_text_file', { path: file.path }); persist(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, encoding: opened.encoding, lineEnding: opened.line_ending, title: file.name }))); }
-      catch (error) { window.alert(String(error)); }
+      await openPath(file.path, file.name);
     }
   }
   onMount(() => {
@@ -152,7 +166,7 @@
   <ToolbarMount />
   <header class="toolbar" aria-label="工作台工具栏">
     <button onclick={newTab} title="新建临时标签">＋ 新建</button>
-    <button onclick={openTextFile}>打开文本</button>
+    <button onclick={openTextFile}>打开文件</button>
     <button onclick={openPreviewFile}>预览文件</button>
     <button onclick={saveActive} disabled={!activeTab || activeTab.kind === 'preview'} title="保存当前标签（⌘S）">保存{activeTab?.dirty ? ' ·' : ''}</button>
     <button onclick={addSplit} title="新建编辑分区">分区</button>
