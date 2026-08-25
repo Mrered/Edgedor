@@ -37,6 +37,12 @@
     showNotice(`${tab.title} 已关闭，可用“撤销关闭”恢复`);
   }
   function closeActive() { if (activeTab) closeTabById(activeTab.id); }
+  function renameTab(tabId: string) {
+    const tab = session.tabs.find((candidate) => candidate.id === tabId);
+    if (!tab) return;
+    const title = window.prompt('重命名标签', tab.title)?.trim();
+    if (title) persist(updateTab(session, tabId, { title, manuallyNamed: true }));
+  }
   function restoreClosed() {
     const slot = session.undoSlots[0];
     if (!slot) { showNotice('没有可撤销的关闭标签'); return; }
@@ -178,7 +184,7 @@
   <nav class="tabs" aria-label="编辑标签">
     {#each session.tabs as tab (tab.id)}
       <div class:active={tab.id === activeTab?.id} class="tab-wrap">
-        <button class="tab" onclick={() => persist(focusTab(session, tab.id))} title={tab.filePath ?? tab.title}>{tab.dirty ? '● ' : ''}{tab.title}{tab.kind === 'preview' ? ' · 预览' : ''}</button>
+        <button class="tab" onclick={() => persist(focusTab(session, tab.id))} ondblclick={(event) => { event.stopPropagation(); renameTab(tab.id); }} title={`${tab.filePath ?? tab.title}（双击重命名）`}>{tab.dirty ? '● ' : ''}{tab.title}{tab.kind === 'preview' ? ' · 预览' : ''}</button>
         <button class="tab-close" aria-label={`关闭 ${tab.title}`} onclick={(event) => { event.stopPropagation(); closeTabById(tab.id); }}>×</button>
       </div>
     {/each}
