@@ -56,6 +56,7 @@ export interface SessionSettings {
   fontSize: number;
   showMenuBarIcon: boolean;
   edgeModifier: 'command' | 'option' | 'control' | 'shift';
+  tabLayout: 'top' | 'left' | 'right';
 }
 
 export interface SessionState {
@@ -131,7 +132,7 @@ export function createSessionState(now = Date.now()): SessionState {
     groups: [group],
     activeGroupId: group.id,
     undoSlots: [],
-    settings: { preserveOnRestart: true, shortcutProfile: 'vscode', shortcutOverrides: {}, fontSize: 14, showMenuBarIcon: true, edgeModifier: 'command' }
+    settings: { preserveOnRestart: true, shortcutProfile: 'vscode', shortcutOverrides: {}, fontSize: 14, showMenuBarIcon: true, edgeModifier: 'command', tabLayout: 'top' }
   };
 }
 
@@ -254,7 +255,7 @@ export function deserializeSession(serialized: string): SessionState | undefined
   try {
     const parsed = JSON.parse(serialized) as SessionState;
     if (parsed?.version !== SESSION_VERSION || !Array.isArray(parsed.tabs) || !Array.isArray(parsed.groups)) return undefined;
-    parsed.settings = { preserveOnRestart: parsed.settings?.preserveOnRestart ?? true, shortcutProfile: parsed.settings?.shortcutProfile ?? 'vscode', shortcutOverrides: parsed.settings?.shortcutOverrides ?? {}, fontSize: parsed.settings?.fontSize ?? 14, showMenuBarIcon: parsed.settings?.showMenuBarIcon ?? true, edgeModifier: parsed.settings?.edgeModifier ?? 'command' };
+    parsed.settings = { preserveOnRestart: parsed.settings?.preserveOnRestart ?? true, shortcutProfile: parsed.settings?.shortcutProfile ?? 'vscode', shortcutOverrides: parsed.settings?.shortcutOverrides ?? {}, fontSize: parsed.settings?.fontSize ?? 14, showMenuBarIcon: parsed.settings?.showMenuBarIcon ?? true, edgeModifier: parsed.settings?.edgeModifier ?? 'command', tabLayout: parsed.settings?.tabLayout ?? 'top' };
     return parsed;
   } catch {
     return undefined;

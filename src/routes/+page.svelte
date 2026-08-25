@@ -57,6 +57,10 @@
     try { await invoke('set_edge_modifier', { modifier }); showNotice(`边缘触发键已改为 ${modifier}`); }
     catch { showNotice('设置已保存，原生边缘触发接口尚未连接'); }
   }
+  function setTabLayout(event: Event) {
+    const tabLayout = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['tabLayout'];
+    persist({ ...session, settings: { ...session.settings, tabLayout } });
+  }
   function changeFontSize(delta: number) { persist({ ...session, settings: { ...session.settings, fontSize: Math.max(10, Math.min(32, session.settings.fontSize + delta)) } }); }
   function openSettings() { showSettings = true; }
   function addSplit() {
@@ -128,7 +132,7 @@
   });
 </script>
 <svelte:head><title>Edgedor</title></svelte:head>
-<main class="shell">
+<main class="shell" class:side-tabs={session.settings.tabLayout !== 'top'} class:side-tabs-right={session.settings.tabLayout === 'right'}>
   <ToolbarMount />
   <header class="toolbar" aria-label="工作台工具栏">
     <button onclick={newTab} title="新建临时标签">＋ 新建</button>
@@ -169,6 +173,7 @@
         <div class="settings-heading"><h2>设置</h2><button aria-label="关闭设置" onclick={() => showSettings = false}>×</button></div>
         <label>编辑器快捷键方案<select aria-label="编辑器快捷键方案" value={session.settings.shortcutProfile} onchange={setShortcutProfile}><option value="vscode">VS Code</option><option value="sublime">Sublime Text</option><option value="jetbrains">JetBrains</option><option value="vim">Vim（编辑区）</option></select></label>
         <label>边缘呼出修饰键<select aria-label="边缘呼出修饰键" value={session.settings.edgeModifier} onchange={setEdgeModifier}><option value="command">Command（⌘）</option><option value="option">Option（⌥）</option><option value="control">Control（⌃）</option><option value="shift">Shift（⇧）</option></select></label>
+        <label>标签布局<select aria-label="标签布局" value={session.settings.tabLayout} onchange={setTabLayout}><option value="top">顶部横向滚动</option><option value="left">左侧标签</option><option value="right">右侧标签</option></select></label>
         {#if session.groups.length === 2}<label>分区比例 <input aria-label="分区比例" type="range" min="0.2" max="0.8" step="0.05" value={splitRatio()} oninput={setSplitRatio} /></label>{/if}
         <label>逐个选择相同内容快捷键<input aria-label="逐个选择相同内容快捷键" placeholder="例如 Cmd+D" value={session.settings.shortcutOverrides.selectNextOccurrence ?? ''} onchange={setNextMatchOverride} /></label>
         <label>编辑器字号 <span class="font-controls"><button onclick={() => changeFontSize(-1)}>−</button><output>{session.settings.fontSize}px</output><button onclick={() => changeFontSize(1)}>＋</button></span></label>
@@ -187,6 +192,17 @@
   :global(:root) { color-scheme: light dark; --text: #1d1d1f; --muted: #6e6e73; --panel: rgba(255,255,255,.88); }
   @media (prefers-color-scheme: dark) { :global(:root) { --text: #f5f5f7; --muted: #a1a1a6; --panel: rgba(30,30,32,.92); } }
   .shell { height: 100vh; display: flex; flex-direction: column; overflow: hidden; background: var(--panel); }
+  .shell.side-tabs { display: grid; grid-template-columns: 126px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+  .shell.side-tabs.side-tabs-right { grid-template-columns: minmax(0, 1fr) 126px; }
+  .shell.side-tabs .toolbar { grid-column: 1 / -1; }
+  .shell.side-tabs .tabs { grid-column: 1; grid-row: 2; flex-direction: column; align-items: stretch; overflow-x: hidden; overflow-y: auto; padding: 8px 6px; }
+  .shell.side-tabs.side-tabs-right .tabs { grid-column: 2; }
+  .shell.side-tabs .workspace { grid-column: 2; grid-row: 2; }
+  .shell.side-tabs.side-tabs-right .workspace { grid-column: 1; }
+  .shell.side-tabs .tab-wrap { width: 100%; min-width: 0; }
+  .shell.side-tabs .tab { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+  .shell.side-tabs .tabs .restore { margin-top: auto; margin-left: 0; }
+  .shell.side-tabs footer { grid-column: 1 / -1; grid-row: 3; }
   .toolbar { display: flex; align-items: center; gap: 5px; padding: 8px 12px 4px; }
   .toolbar button, .settings-panel button { border: 0; border-radius: 7px; padding: 5px 9px; color: var(--muted); background: color-mix(in srgb, var(--text) 7%, transparent); font-size: 11px; }
   .toolbar button:hover, .settings-panel button:hover, .tab-close:hover { color: var(--text); background: color-mix(in srgb, var(--text) 14%, transparent); }
