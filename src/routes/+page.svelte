@@ -120,7 +120,9 @@
   }
   onMount(() => {
     const saved = deserializeSession(localStorage.getItem('edgedor.session') ?? '');
-    session = saved ?? addTab(session, createTab());
+    const restored = saved ?? addTab(session, createTab());
+    const restoredActiveTabId = restored.groups.find((group) => group.id === restored.activeGroupId)?.activeTabId;
+    session = restoredActiveTabId ? focusTab(restored, restoredActiveTabId) : restored;
     void invoke('set_menu_bar_icon_visible', { visible: session.settings.showMenuBarIcon });
     void invoke('set_edge_modifier', { modifier: session.settings.edgeModifier });
     expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) { persist(result.state); showNotice(`${result.expired.length} 个未访问标签已超时，已放入撤销槽`); } }, 60_000);
