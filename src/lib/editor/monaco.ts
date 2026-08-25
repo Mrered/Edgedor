@@ -24,13 +24,27 @@ function parseKeybinding(binding: string): number | undefined {
   const parts = binding.split('+').map((part) => part.trim().toLowerCase());
   let value = 0;
   for (const part of parts.slice(0, -1)) {
-    if (part === 'cmd' || part === 'command' || part === 'ctrl' || part === 'control') value |= monaco.KeyMod.CtrlCmd;
+    if (part === 'cmd' || part === 'command') value |= monaco.KeyMod.CtrlCmd;
+    if (part === 'ctrl' || part === 'control') value |= monaco.KeyMod.Ctrl;
     if (part === 'alt' || part === 'option') value |= monaco.KeyMod.Alt;
     if (part === 'shift') value |= monaco.KeyMod.Shift;
   }
   const key = parts.at(-1) ?? '';
   if (key.length === 1 && /[a-z]/.test(key)) return value | (monaco.KeyCode.KeyA + key.charCodeAt(0) - 97);
-  const named: Record<string, monaco.KeyCode> = { up: monaco.KeyCode.UpArrow, down: monaco.KeyCode.DownArrow, left: monaco.KeyCode.LeftArrow, right: monaco.KeyCode.RightArrow, k: monaco.KeyCode.KeyK, g: monaco.KeyCode.KeyG };
+  const named: Record<string, monaco.KeyCode> = {
+    up: monaco.KeyCode.UpArrow,
+    down: monaco.KeyCode.DownArrow,
+    left: monaco.KeyCode.LeftArrow,
+    right: monaco.KeyCode.RightArrow,
+    slash: monaco.KeyCode.Slash,
+    '/': monaco.KeyCode.Slash,
+    backspace: monaco.KeyCode.Backspace,
+    delete: monaco.KeyCode.Delete,
+    enter: monaco.KeyCode.Enter,
+    escape: monaco.KeyCode.Escape,
+    k: monaco.KeyCode.KeyK,
+    g: monaco.KeyCode.KeyG
+  };
   return named[key] ? value | named[key] : undefined;
 }
 
