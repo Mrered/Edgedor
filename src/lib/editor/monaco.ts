@@ -25,7 +25,7 @@ function parseKeybinding(binding: string): number | undefined {
   let value = 0;
   for (const part of parts.slice(0, -1)) {
     if (part === 'cmd' || part === 'command') value |= monaco.KeyMod.CtrlCmd;
-    if (part === 'ctrl' || part === 'control') value |= monaco.KeyMod.Ctrl;
+    if (part === 'ctrl' || part === 'control') value |= monaco.KeyMod.WinCtrl;
     if (part === 'alt' || part === 'option') value |= monaco.KeyMod.Alt;
     if (part === 'shift') value |= monaco.KeyMod.Shift;
   }
