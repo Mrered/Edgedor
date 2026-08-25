@@ -33,14 +33,25 @@
     try { const opened = await invoke<{ path: string; content: string; language: string }>('open_text_file', { path }); persist(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, title: path.split('/').at(-1) }))); }
     catch (error) { window.alert(String(error)); }
   }
+  async function openDroppedFile(event: DragEvent) {
+    event.preventDefault();
+    const file = event.dataTransfer?.files?.[0] as (File & { path?: string }) | undefined;
+    if (file?.path) {
+      try { const opened = await invoke<{ path: string; content: string; language: string }>('open_text_file', { path: file.path }); persist(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, title: file.name }))); }
+      catch (error) { window.alert(String(error)); }
+    }
+  }
   onMount(() => {
     const saved = deserializeSession(localStorage.getItem('edgedor.session') ?? '');
     session = saved ?? addTab(session, createTab());
     expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) persist(result.state); }, 60_000);
     const onKeyDown = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void saveActive(); } };
     window.addEventListener('keydown', onKeyDown);
+    const onDragOver = (event: DragEvent) => event.preventDefault();
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('drop', openDroppedFile);
     void (async () => { unlisten = await listenPanelStatus((next) => (status = next)); await panelAction('show'); })();
-    return () => { unlisten?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); };
+    return () => { unlisten?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); };
   });
 </script>
 <svelte:head><title>Edgedor</title></svelte:head>
