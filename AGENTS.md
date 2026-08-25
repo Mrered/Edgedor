@@ -1,4 +1,8 @@
 <!-- GSD:project-start source:PROJECT.md -->
+## Language
+
+所有用户可见回复、规划文档摘要和工作流输出使用简体中文。
+
 ## Project
 
 **Edgedor**
