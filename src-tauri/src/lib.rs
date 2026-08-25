@@ -105,6 +105,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             {
                 let panel = app.state::<native_panel::NativePanel>();
+                let _ = native_panel::NativePanel::set_accessory_activation_policy();
                 let _ = panel.install_status_item();
                 native_panel::attach_from_setup(app.handle(), &panel)
                     .map_err(|error| Box::<dyn std::error::Error>::from(error))?;

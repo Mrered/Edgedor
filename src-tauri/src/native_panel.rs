@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use objc2::runtime::AnyObject;
 use objc2::{MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSBackingStoreType, NSPanel, NSStatusBar, NSView, NSWindowStyleMask, NSFloatingWindowLevel, NSScreen};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSPanel, NSStatusBar, NSView, NSWindowStyleMask, NSFloatingWindowLevel, NSScreen};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
@@ -25,6 +25,11 @@ pub struct NativePanel {
 }
 
 impl NativePanel {
+    pub fn set_accessory_activation_policy() -> Result<(), String> {
+        let marker = MainThreadMarker::new().ok_or("application policy must be set on the main thread")?;
+        if NSApplication::sharedApplication(marker).setActivationPolicy(NSApplicationActivationPolicy::Accessory) { Ok(()) } else { Err("unable to set accessory activation policy".into()) }
+    }
+
     pub fn install_status_item(&self) -> Result<(), String> {
         let marker = MainThreadMarker::new().ok_or("status item must be created on the main thread")?;
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(-2.0);
