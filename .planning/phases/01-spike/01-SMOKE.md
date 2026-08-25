@@ -9,6 +9,7 @@
 - `cargo check --manifest-path src-tauri/Cargo.toml`：成功。
 - `npm run tauri build -- --target aarch64-apple-darwin --bundles app,dmg`：构建成功，DMG 为 `src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Edgedor_0.1.0_aarch64.dmg`。
 - `cargo check` 同时覆盖 `objc2` 的真实 `NSPanel` owner 与 `NSEvent` 贴边监视器；运行时仍需 macOS 辅助功能权限冒烟。
+- 本机 DMG 挂载启动成功，`edgedor` 进程存活；重复执行 `open` 后进程计数仍为 1，随后可正常退出并卸载 DMG。
 
 ## 尚未完成
 
