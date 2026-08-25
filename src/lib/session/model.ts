@@ -193,6 +193,28 @@ export function focusTab(state: SessionState, tabId: string, now = Date.now()): 
   };
 }
 
+export function moveTabToGroup(state: SessionState, tabId: string, targetGroupId: string, now = Date.now()): SessionState {
+  const tab = state.tabs.find((candidate) => candidate.id === tabId);
+  const target = state.groups.find((group) => group.id === targetGroupId);
+  if (!tab || !target) return state;
+  if (tab.groupId === targetGroupId) return focusTab(state, tabId, now);
+  const source = state.groups.find((group) => group.id === tab.groupId);
+  const nextGroups = state.groups.map((group) => {
+    if (group.id === source?.id) {
+      const tabIds = group.tabIds.filter((id) => id !== tabId);
+      return { ...group, tabIds, activeTabId: group.activeTabId === tabId ? tabIds.at(-1) : group.activeTabId };
+    }
+    if (group.id === targetGroupId) return { ...group, tabIds: [...group.tabIds, tabId], activeTabId: tabId };
+    return group;
+  });
+  return {
+    ...state,
+    tabs: state.tabs.map((candidate) => candidate.id === tabId ? { ...candidate, groupId: targetGroupId, lastFocusedAt: now, updatedAt: Math.max(candidate.updatedAt, now) } : candidate),
+    groups: nextGroups,
+    activeGroupId: targetGroupId
+  };
+}
+
 export function updateTab(state: SessionState, tabId: string, patch: Partial<SessionTab>, now = Date.now()): SessionState {
   return {
     ...state,

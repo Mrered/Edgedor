@@ -6,7 +6,7 @@
   import PreviewSurface from '../components/PreviewSurface.svelte';
   import ToolbarMount from '../components/ToolbarMount.svelte';
   import { listenPanelStatus, panelAction, type PanelStatus } from '../lib/tauri/panel';
-  import { addTab, closeTab, createGroup, createSessionState, createTab, deserializeSession, expireTabs, focusTab, removeGroup, restoreLatest, serializeSession, setGroupRatio, updateTab, type EditorGroup, type EditorSnapshot, type SessionState, type SessionTab } from '../lib/session';
+  import { addTab, closeTab, createGroup, createSessionState, createTab, deserializeSession, expireTabs, focusTab, moveTabToGroup, removeGroup, restoreLatest, serializeSession, setGroupRatio, updateTab, type EditorGroup, type EditorSnapshot, type SessionState, type SessionTab } from '../lib/session';
   import type { EditorCommand } from '../lib/shortcuts';
   let status: PanelStatus = { visible: true, focused: true, bridgeReady: false };
   let pinned = false;
@@ -18,6 +18,7 @@
   let showSearch = false;
   let searchQuery = '';
   let searchInput: HTMLInputElement;
+  let draggedTabId = '';
   let notice = '';
   let noticeTimer: number | undefined;
   const editorShortcutCommands: Array<{ id: EditorCommand; label: string }> = [
@@ -117,6 +118,17 @@
     if (session.groups.length <= 1) { showNotice('当前只有一个编辑分区'); return; }
     persist(removeGroup(session, session.activeGroupId));
   }
+  function startTabDrag(tabId: string, event: DragEvent) {
+    draggedTabId = tabId;
+    event.dataTransfer?.setData('text/plain', tabId);
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+  }
+  function dropTabInGroup(groupId: string, event: DragEvent) {
+    event.preventDefault();
+    const tabId = event.dataTransfer?.getData('text/plain') || draggedTabId;
+    if (tabId) persist(moveTabToGroup(session, tabId, groupId));
+    draggedTabId = '';
+  }
   function groupTab(group: EditorGroup) { return session.tabs.find((tab) => tab.id === group.activeTabId); }
   function splitRatio() { return session.groups.find((group) => group.parentId)?.splitRatio ?? 0.5; }
   function setSplitRatio(event: Event) {
@@ -160,24 +172,24 @@
     }
   }
   async function openTextFile() {
-    const path = await open({ multiple: false, directory: false });
+    const path = await open({ multiple: true, directory: false });
     if (!path) return;
-    const selectedPath = Array.isArray(path) ? path[0] : path;
-    if (!selectedPath) return;
-    await openPath(selectedPath);
+    const selectedPaths = Array.isArray(path) ? path : [path];
+    for (const selectedPath of selectedPaths) if (selectedPath) await openPath(selectedPath);
   }
   async function openPreviewFile() {
-    const path = await open({ multiple: false, directory: false });
-    const selectedPath = Array.isArray(path) ? path[0] : path;
-    if (!selectedPath) return;
-    try { await addPreviewPath(selectedPath); } catch (error) { window.alert(`不支持预览此文件：${String(error)}`); }
+    const path = await open({ multiple: true, directory: false });
+    if (!path) return;
+    const selectedPaths = Array.isArray(path) ? path : [path];
+    for (const selectedPath of selectedPaths) {
+      if (!selectedPath) continue;
+      try { await addPreviewPath(selectedPath); } catch (error) { window.alert(`不支持预览此文件：${String(error)}`); }
+    }
   }
   async function openDroppedFile(event: DragEvent) {
     event.preventDefault();
-    const file = event.dataTransfer?.files?.[0] as (File & { path?: string }) | undefined;
-    if (file?.path) {
-      await openPath(file.path, file.name);
-    }
+    const files = Array.from(event.dataTransfer?.files ?? []) as (File & { path?: string })[];
+    for (const file of files) if (file.path) await openPath(file.path, file.name);
   }
   onMount(() => {
     const saved = deserializeSession(localStorage.getItem('edgedor.session') ?? '');
@@ -229,7 +241,7 @@
   <nav class="tabs" aria-label="编辑标签">
     {#each session.tabs as tab (tab.id)}
       <div class:active={tab.id === activeTab?.id} class="tab-wrap">
-        <button class="tab" onclick={() => persist(focusTab(session, tab.id))} ondblclick={(event) => { event.stopPropagation(); renameTab(tab.id); }} title={`${tab.filePath ?? tab.title}（双击重命名）`}>{tab.dirty ? '● ' : ''}{tab.title}{tab.kind === 'preview' ? ' · 预览' : ''}</button>
+        <button class="tab" draggable="true" ondragstart={(event) => startTabDrag(tab.id, event)} onclick={() => persist(focusTab(session, tab.id))} ondblclick={(event) => { event.stopPropagation(); renameTab(tab.id); }} title={`${tab.filePath ?? tab.title}（双击重命名，可拖到其他分区）`}>{tab.dirty ? '● ' : ''}{tab.title}{tab.kind === 'preview' ? ' · 预览' : ''}</button>
         <button class="tab-close" aria-label={`关闭 ${tab.title}`} onclick={(event) => { event.stopPropagation(); closeTabById(tab.id); }}>×</button>
       </div>
     {/each}
@@ -239,7 +251,7 @@
   <section class:split-workspace={session.groups.length > 1} class="workspace" aria-label="临时编辑区">
     {#each session.groups as group (group.id)}
       {@const tab = groupTab(group)}
-      <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={`编辑分区 ${group.id}`}>
+      <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={`编辑分区 ${group.id}`} ondragover={(event) => event.preventDefault()} ondrop={(event) => dropTabInGroup(group.id, event)}>
         {#if tab}
           {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} onRefresh={() => refreshPreview(tab)} />{:else}{#key `${tab.id}:${session.settings.fontSize}:${session.settings.shortcutProfile}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} onChange={(content) => editContentFor(tab.id, content)} onStateChange={(editor) => editStateFor(tab.id, editor)} />{/key}{/if}
         {:else}<button class="empty" onclick={() => { const next = addTab(session, createTab(), group.id); persist(next); }}>新建分区标签</button>{/if}

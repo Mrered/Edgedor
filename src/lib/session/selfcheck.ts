@@ -3,11 +3,13 @@ import {
   TAB_EXPIRY_MS,
   addTab,
   closeTab,
+  createGroup,
   createSessionState,
   createTab,
   deserializeSession,
   expireTabs,
   focusTab,
+  moveTabToGroup,
   restoreLatest,
   serializeSession
 } from './model.ts';
@@ -37,6 +39,10 @@ const previewTab = createTab({ id: 'preview-1', kind: 'preview', filePath: '/tmp
 const serializedPreview = JSON.parse(serializeSession(addTab(state, previewTab))) as { tabs: Array<{ id: string; content: string; previewDataUrl?: string }> };
 const persistedPreview = serializedPreview.tabs.find((candidate) => candidate.id === previewTab.id);
 assert(persistedPreview?.content === '' && persistedPreview.previewDataUrl === undefined, 'does not persist preview payload');
+const splitState = createGroup(state);
+const targetGroupId = splitState.groups[1]?.id ?? 'missing';
+const movedState = moveTabToGroup(splitState, tab.id, targetGroupId, start + 2_000);
+assert(movedState.tabs.find((candidate) => candidate.id === tab.id)?.groupId === targetGroupId, 'moves tab between groups');
 for (let index = 0; index < MAX_UNDO_SLOTS + 2; index += 1) {
   const extraTab = createTab({ id: `extra-${index}`, now: start });
   state = addTab(state, extraTab);
