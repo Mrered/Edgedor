@@ -134,6 +134,7 @@
     <button onclick={newTab} title="新建临时标签">＋ 新建</button>
     <button onclick={openTextFile}>打开文本</button>
     <button onclick={openPreviewFile}>预览文件</button>
+    <button onclick={saveActive} disabled={!activeTab || activeTab.kind === 'preview'} title="保存当前标签（⌘S）">保存{activeTab?.dirty ? ' ·' : ''}</button>
     <button onclick={addSplit} title="新建编辑分区">分区</button>
     <button onclick={closeSplit} disabled={session.groups.length <= 1} title="合并当前编辑分区">合并</button>
     <span class="toolbar-spacer"></span>
