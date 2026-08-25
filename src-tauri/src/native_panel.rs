@@ -9,8 +9,8 @@ use std::sync::Mutex;
 
 use objc2::runtime::AnyObject;
 use objc2::{MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSBackingStoreType, NSPanel, NSView, NSWindowStyleMask, NSFloatingWindowLevel, NSScreen};
-use objc2_foundation::{NSPoint, NSRect, NSSize};
+use objc2_app_kit::{NSBackingStoreType, NSPanel, NSStatusBar, NSView, NSWindowStyleMask, NSFloatingWindowLevel, NSScreen};
+use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 #[path = "edge_trigger.rs"]
@@ -21,9 +21,18 @@ pub struct NativePanel {
     panel: Mutex<Option<usize>>,
     trigger: edge_trigger::EdgeTrigger,
     pinned: Mutex<bool>,
+    status_item: Mutex<Option<usize>>,
 }
 
 impl NativePanel {
+    pub fn install_status_item(&self) -> Result<(), String> {
+        let marker = MainThreadMarker::new().ok_or("status item must be created on the main thread")?;
+        let item = NSStatusBar::systemStatusBar().statusItemWithLength(-2.0);
+        if let Some(button) = item.button(marker) { button.setTitle(&NSString::from_str("Edgedor")); }
+        *self.status_item.lock().map_err(|_| "status item state unavailable")? = Some(RetainedPanel::leak_status_item(item));
+        Ok(())
+    }
+
     pub fn start_edge_trigger(&self, app: &AppHandle) -> Result<(), String> {
         let app = app.clone();
         self.trigger.start(edge_trigger::EdgeTriggerConfig::default(), move |_edge| {
@@ -129,6 +138,10 @@ impl RetainedPanel {
 
     fn leak_view(view: objc2::rc::Retained<NSView>) -> usize {
         objc2::rc::Retained::into_raw(view) as usize
+    }
+
+    fn leak_status_item(item: objc2::rc::Retained<objc2_app_kit::NSStatusItem>) -> usize {
+        objc2::rc::Retained::into_raw(item) as usize
     }
 }
 
