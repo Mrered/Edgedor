@@ -23,7 +23,7 @@
     if (!activeTab) return;
     const path = activeTab.filePath ?? await save({ defaultPath: `${activeTab.title.replace(/[^\w.-]+/g, '-')}.txt`, filters: [{ name: '文本文件', extensions: ['txt', 'md', 'json', 'js', 'ts', 'rs', 'py'] }] });
     if (!path) return;
-    try { await invoke('save_file', { path, content: activeTab.content }); persist(updateTab(session, activeTab.id, { filePath: path, kind: 'file' })); }
+    try { await invoke('save_file', { path, content: activeTab.content, encoding: activeTab.encoding ?? 'utf-8', lineEnding: activeTab.lineEnding ?? '\n' }); persist(updateTab(session, activeTab.id, { filePath: path, kind: 'file' })); }
     catch (error) { window.alert(`保存失败：${String(error)}`); }
   }
   async function togglePinned() { pinned = !pinned; await invoke('set_panel_pinned', { pinned }); }
@@ -35,7 +35,7 @@
     if (!path) return;
     const selectedPath = Array.isArray(path) ? path[0] : path;
     if (!selectedPath) return;
-    try { const opened = await invoke<{ path: string; content: string; language: string }>('open_text_file', { path: selectedPath }); persist(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, title: selectedPath.split('/').at(-1) }))); }
+    try { const opened = await invoke<{ path: string; content: string; language: string; encoding: string; line_ending: '\n' | '\r\n' | '\r' }>('open_text_file', { path: selectedPath }); persist(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, encoding: opened.encoding, lineEnding: opened.line_ending, title: selectedPath.split('/').at(-1) }))); }
     catch (error) { window.alert(String(error)); }
   }
   async function openPreviewFile() {
@@ -49,7 +49,7 @@
     event.preventDefault();
     const file = event.dataTransfer?.files?.[0] as (File & { path?: string }) | undefined;
     if (file?.path) {
-      try { const opened = await invoke<{ path: string; content: string; language: string }>('open_text_file', { path: file.path }); persist(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, title: file.name }))); }
+      try { const opened = await invoke<{ path: string; content: string; language: string; encoding: string; line_ending: '\n' | '\r\n' | '\r' }>('open_text_file', { path: file.path }); persist(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, encoding: opened.encoding, lineEnding: opened.line_ending, title: file.name }))); }
       catch (error) { window.alert(String(error)); }
     }
   }

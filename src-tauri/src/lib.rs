@@ -16,22 +16,31 @@ struct PanelStatus {
 struct PanelState(std::sync::Mutex<PanelStatus>);
 
 #[tauri::command]
-fn save_file(path: &str, content: &str) -> Result<(), String> {
+fn save_file(path: &str, content: &str, encoding: Option<&str>, line_ending: Option<&str>) -> Result<(), String> {
     if path.is_empty() { return Err("save path is empty".into()); }
-    std::fs::write(path, content).map_err(|error| error.to_string())
+    let normalized = match line_ending.unwrap_or("\n") { "\r\n" => content.replace('\n', "\r\n"), "\r" => content.replace('\n', "\r"), _ => content.to_string() };
+    let bytes = match encoding.unwrap_or("utf-8").to_ascii_lowercase().as_str() {
+        "utf-16le" => encoding_rs::UTF_16LE.encode(&normalized).0.into_owned(),
+        "utf-16be" => encoding_rs::UTF_16BE.encode(&normalized).0.into_owned(),
+        "gb18030" => encoding_rs::GB18030.encode(&normalized).0.into_owned(),
+        _ => normalized.as_bytes().to_vec(),
+    };
+    std::fs::write(path, bytes).map_err(|error| error.to_string())
 }
 
 #[derive(Serialize)]
-struct OpenedFile { path: String, content: String, language: String }
+struct OpenedFile { path: String, content: String, language: String, encoding: String, line_ending: String }
 
 #[derive(Serialize)]
 struct PreviewFile { path: String, data_url: String, mime: String }
 
 #[tauri::command]
 fn open_text_file(path: &str) -> Result<OpenedFile, String> {
-    let content = std::fs::read_to_string(path).map_err(|error| format!("不支持或无法读取此文件：{error}"))?;
+    let bytes = std::fs::read(path).map_err(|error| format!("不支持或无法读取此文件：{error}"))?;
+    let (encoding, content) = if bytes.starts_with(&[0xFF, 0xFE]) { ("utf-16le", encoding_rs::UTF_16LE.decode(&bytes[2..]).0.into_owned()) } else if bytes.starts_with(&[0xFE, 0xFF]) { ("utf-16be", encoding_rs::UTF_16BE.decode(&bytes[2..]).0.into_owned()) } else if let Ok(content) = std::str::from_utf8(&bytes) { ("utf-8", content.to_string()) } else { ("gb18030", encoding_rs::GB18030.decode(&bytes).0.into_owned()) };
     let language = std::path::Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or("plaintext").to_string();
-    Ok(OpenedFile { path: path.to_string(), content, language })
+    let line_ending = if content.contains("\r\n") { "\r\n" } else if content.contains('\r') { "\r" } else { "\n" };
+    Ok(OpenedFile { path: path.to_string(), content, language, encoding: encoding.to_string(), line_ending: line_ending.to_string() })
 }
 
 #[tauri::command]
