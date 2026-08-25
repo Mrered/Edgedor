@@ -13,6 +13,9 @@ use objc2_app_kit::{NSBackingStoreType, NSPanel, NSView, NSWindowStyleMask, NSFl
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
+#[path = "edge_trigger.rs"]
+pub mod edge_trigger;
+
 #[derive(Default)]
 pub struct NativePanel {
     panel: Mutex<Option<usize>>,
