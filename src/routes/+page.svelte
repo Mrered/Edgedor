@@ -6,7 +6,7 @@
   import PreviewSurface from '../components/PreviewSurface.svelte';
   import ToolbarMount from '../components/ToolbarMount.svelte';
   import { listenPanelStatus, panelAction, type PanelStatus } from '../lib/tauri/panel';
-  import { addTab, closeTab, createGroup, createSessionState, createTab, deserializeSession, expireTabs, focusTab, removeGroup, restoreLatest, serializeSession, setGroupRatio, updateTab, type EditorGroup, type SessionState, type SessionTab } from '../lib/session';
+  import { addTab, closeTab, createGroup, createSessionState, createTab, deserializeSession, expireTabs, focusTab, removeGroup, restoreLatest, serializeSession, setGroupRatio, updateTab, type EditorGroup, type EditorSnapshot, type SessionState, type SessionTab } from '../lib/session';
   let status: PanelStatus = { visible: true, focused: true, bridgeReady: false };
   let pinned = false;
   let session: SessionState = createSessionState();
@@ -39,6 +39,7 @@
   }
   function editContentFor(tabId: string, content: string) { persist(updateTab(session, tabId, { content })); }
   function editContent(content: string) { if (activeTab) editContentFor(activeTab.id, content); }
+  function editStateFor(tabId: string, editor: EditorSnapshot) { persist(updateTab(session, tabId, { editor })); }
   async function saveActive() {
     if (!activeTab) return;
     const path = activeTab.filePath ?? await save({ defaultPath: `${activeTab.title.replace(/[^\w.-]+/g, '-')}.txt`, filters: [{ name: '文本文件', extensions: ['txt', 'md', 'json', 'js', 'ts', 'rs', 'py'] }] });
@@ -160,7 +161,7 @@
       {@const tab = groupTab(group)}
       <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={`编辑分区 ${group.id}`}>
         {#if tab}
-          {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} />{:else}{#key `${tab.id}:${session.settings.fontSize}:${session.settings.shortcutProfile}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} onChange={(content) => editContentFor(tab.id, content)} />{/key}{/if}
+          {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} />{:else}{#key `${tab.id}:${session.settings.fontSize}:${session.settings.shortcutProfile}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} onChange={(content) => editContentFor(tab.id, content)} onStateChange={(editor) => editStateFor(tab.id, editor)} />{/key}{/if}
         {:else}<button class="empty" onclick={() => { const next = addTab(session, createTab(), group.id); persist(next); }}>新建分区标签</button>{/if}
       </section>
     {/each}
