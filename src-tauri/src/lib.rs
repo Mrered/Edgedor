@@ -16,6 +16,12 @@ struct PanelStatus {
 struct PanelState(std::sync::Mutex<PanelStatus>);
 
 #[tauri::command]
+fn save_file(path: &str, content: &str) -> Result<(), String> {
+    if path.is_empty() { return Err("save path is empty".into()); }
+    std::fs::write(path, content).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn panel_action(action: &str, app: AppHandle, state: State<'_, PanelState>) -> Result<PanelStatus, String> {
     if !matches!(action, "show" | "focus" | "hide") {
         return Err("unsupported panel action".into());
@@ -53,7 +59,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![panel_action])
+        .invoke_handler(tauri::generate_handler![panel_action, save_file])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {

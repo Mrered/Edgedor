@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
   import EditorSurface from '../components/EditorSurface.svelte';
   import ToolbarMount from '../components/ToolbarMount.svelte';
   import { listenPanelStatus, panelAction, type PanelStatus } from '../lib/tauri/panel';
@@ -15,12 +16,21 @@
   function closeActive() { if (activeTab) persist(closeTab(session, activeTab.id)); }
   function restoreClosed() { persist(restoreLatest(session)); }
   function editContent(content: string) { if (activeTab) persist(updateTab(session, activeTab.id, { content })); }
+  async function saveActive() {
+    if (!activeTab) return;
+    const path = activeTab.filePath ?? window.prompt('保存临时标签到文件路径', `${activeTab.title.replace(/[^\w.-]+/g, '-')}.txt`);
+    if (!path) return;
+    try { await invoke('save_file', { path, content: activeTab.content }); persist(updateTab(session, activeTab.id, { filePath: path, kind: 'file' })); }
+    catch (error) { window.alert(`保存失败：${String(error)}`); }
+  }
   onMount(() => {
     const saved = deserializeSession(localStorage.getItem('edgedor.session') ?? '');
     session = saved ?? addTab(session, createTab());
     expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) persist(result.state); }, 60_000);
+    const onKeyDown = (event: KeyboardEvent) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void saveActive(); } };
+    window.addEventListener('keydown', onKeyDown);
     void (async () => { unlisten = await listenPanelStatus((next) => (status = next)); await panelAction('show'); })();
-    return () => { unlisten?.(); if (expiryTimer) window.clearInterval(expiryTimer); };
+    return () => { unlisten?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); };
   });
 </script>
 <svelte:head><title>Edgedor</title></svelte:head>
