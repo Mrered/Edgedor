@@ -5,11 +5,11 @@
 //! The panel pointer is intentionally kept as an opaque address because
 //! AppKit objects are main-thread confined and cannot be put in Tauri state.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use objc2::runtime::AnyObject;
 use objc2::{MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSPanel, NSStatusBar, NSView, NSWindowStyleMask, NSFloatingWindowLevel, NSScreen};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSEvent, NSEventMask, NSPanel, NSStatusBar, NSView, NSWindowStyleMask, NSFloatingWindowLevel, NSScreen};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
@@ -20,8 +20,9 @@ pub mod edge_trigger;
 pub struct NativePanel {
     panel: Mutex<Option<usize>>,
     trigger: edge_trigger::EdgeTrigger,
-    pinned: Mutex<bool>,
+    pinned: Arc<Mutex<bool>>,
     status_item: Mutex<Option<usize>>,
+    dismiss_monitor: Mutex<Option<usize>>,
 }
 
 impl NativePanel {
@@ -60,9 +61,17 @@ impl NativePanel {
     pub fn show_at_edge(&self, edge: edge_trigger::Edge) -> Result<(), String> {
         let panel = self.create()?;
         let marker = MainThreadMarker::new().ok_or("NSPanel must be shown on the main thread")?;
-        let screen = NSScreen::mainScreen(marker).ok_or("no main screen available")?;
+        let screen = screen_at(NSEvent::mouseLocation(), marker)
+            .or_else(|| NSScreen::mainScreen(marker))
+            .ok_or("no screen available")?;
         let frame = screen.visibleFrame();
-        let width = (frame.size.width * 0.35).clamp(320.0, 960.0);
+        let current_width = panel.frame().size.width;
+        let ratio = if current_width > 1.0 && panel.isVisible() {
+            (current_width / frame.size.width).clamp(0.20, 0.60)
+        } else {
+            0.35
+        };
+        let width = (frame.size.width * ratio).clamp(320.0, frame.size.width * 0.60);
         let x = match edge { edge_trigger::Edge::Left => frame.origin.x, edge_trigger::Edge::Right => frame.origin.x + frame.size.width - width };
         panel.setFrame_display(NSRect::new(NSPoint::new(x, frame.origin.y), NSSize::new(width, frame.size.height)), true);
         panel.orderFrontRegardless();
@@ -143,6 +152,34 @@ impl NativePanel {
         if let Some(panel) = self.panel() { panel.setHidesOnDeactivate(!pinned); }
         Ok(())
     }
+
+    /// Install an AppKit global monitor so clicks outside the panel dismiss it.
+    /// `setHidesOnDeactivate` handles normal app deactivation, while this monitor
+    /// also covers clicks in another app when the panel is a floating window.
+    pub fn install_dismiss_monitor(&self) -> Result<(), String> {
+        if self.dismiss_monitor.lock().map_err(|_| "dismiss monitor state unavailable")?.is_some() {
+            return Ok(());
+        }
+        let panel = self.create()? as *const NSPanel as usize;
+        let pinned = self.pinned.clone();
+        let block = block2::RcBlock::new(move |_event: std::ptr::NonNull<NSEvent>| {
+            if pinned.lock().map(|value| *value).unwrap_or(true) {
+                return;
+            }
+            let panel = unsafe { &*(panel as *const NSPanel) };
+            if panel.isVisible() {
+                panel.orderOut(None::<&AnyObject>);
+            }
+        });
+        let token = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
+            NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown,
+            &block,
+        )
+        .ok_or_else(|| "unable to install panel dismiss monitor".to_string())?;
+        *self.dismiss_monitor.lock().map_err(|_| "dismiss monitor state unavailable")? =
+            Some(RetainedPanel::leak_event_monitor(token));
+        Ok(())
+    }
 }
 
 struct RetainedPanel;
@@ -160,6 +197,21 @@ impl RetainedPanel {
     fn leak_status_item(item: objc2::rc::Retained<objc2_app_kit::NSStatusItem>) -> usize {
         objc2::rc::Retained::into_raw(item) as usize
     }
+
+    fn leak_event_monitor(item: objc2::rc::Retained<AnyObject>) -> usize {
+        objc2::rc::Retained::into_raw(item) as usize
+    }
+}
+
+fn screen_at(point: NSPoint, marker: MainThreadMarker) -> Option<objc2::rc::Retained<NSScreen>> {
+    let screens = NSScreen::screens(marker);
+    (0..screens.count()).find_map(|index| {
+        let screen = screens.objectAtIndex(index);
+        let frame = screen.frame();
+        let within_x = point.x >= frame.origin.x && point.x <= frame.origin.x + frame.size.width;
+        let within_y = point.y >= frame.origin.y && point.y <= frame.origin.y + frame.size.height;
+        if within_x && within_y { Some(screen) } else { None }
+    })
 }
 
 pub fn attach_from_setup(app: &AppHandle, state: &NativePanel) -> Result<(), String> {

@@ -119,6 +119,8 @@ pub fn run() {
                 let _ = panel.install_status_item();
                 native_panel::attach_from_setup(app.handle(), &panel)
                     .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+                panel.install_dismiss_monitor()
+                    .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
                 let _ = panel.start_edge_trigger(app.handle());
             }
             let state = app.state::<PanelState>();

@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use block2::RcBlock;
+use dispatch2::{DispatchQueue, DispatchTime};
 use objc2::runtime::AnyObject;
 use objc2::{rc::Retained, MainThreadMarker};
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSScreen};
@@ -67,6 +68,9 @@ impl EdgeTrigger {
     where
         F: Fn(Edge) + Send + Sync + 'static,
     {
+        if config.modifier.is_empty() {
+            return Err("edge trigger modifier cannot be empty".to_string());
+        }
         let mut monitor = self
             .monitor
             .lock()
@@ -105,6 +109,28 @@ impl EdgeTrigger {
                 state.edge = Some(edge);
                 state.edge_since = Some(Instant::now());
                 state.fired = false;
+                let timer_state = Arc::clone(&block_state);
+                let timer_callback = Arc::clone(&block_callback);
+                let timer_edge = edge;
+                let timer_delay = config.hold_duration;
+                if let Ok(delay) = i64::try_from(timer_delay.as_nanos()) {
+                    let _ = DispatchQueue::main().after(
+                        DispatchTime::NOW.time(delay),
+                        move || {
+                            let mut state = match timer_state.lock() {
+                                Ok(state) => state,
+                                Err(_) => return,
+                            };
+                            if state.edge == Some(timer_edge)
+                                && !state.fired
+                                && state.edge_since.is_some_and(|since| since.elapsed() >= timer_delay)
+                            {
+                                state.fired = true;
+                                timer_callback(timer_edge);
+                            }
+                        },
+                    );
+                }
                 return;
             }
             if !state.fired

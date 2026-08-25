@@ -29,6 +29,7 @@ encoding_rs = "0.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
+dispatch2 = "0.3"
 objc2 = "0.6"
 objc2-foundation = "0.3"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSApplication", "NSButton", "NSColor", "NSControl", "NSEvent", "NSPanel", "NSResponder", "NSRunningApplication", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "NSWindow", "NSScreen", "NSGraphics"] }
