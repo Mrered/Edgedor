@@ -8,8 +8,8 @@
 use std::sync::{Arc, Mutex};
 
 use objc2::runtime::AnyObject;
-use objc2::{MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSEvent, NSEventMask, NSEventModifierFlags, NSPanel, NSStatusBar, NSView, NSWindowStyleMask, NSFloatingWindowLevel, NSScreen};
+use objc2::{sel, MainThreadMarker, MainThreadOnly};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSBackingStoreType, NSEvent, NSEventMask, NSEventModifierFlags, NSMenu, NSMenuItem, NSPanel, NSStatusBar, NSView, NSWindowStyleMask, NSFloatingWindowLevel, NSScreen};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
@@ -47,7 +47,32 @@ impl NativePanel {
     pub fn install_status_item(&self) -> Result<(), String> {
         if self.status_item.lock().map_err(|_| "status item state unavailable")?.is_some() { return Ok(()); }
         let marker = MainThreadMarker::new().ok_or("status item must be created on the main thread")?;
+        let panel = self.create()?;
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(-2.0);
+        let menu = NSMenu::initWithTitle(NSMenu::alloc(marker), &NSString::from_str("Edgedor"));
+        let show_item = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(marker),
+                &NSString::from_str("显示 Edgedor"),
+                Some(sel!(makeKeyAndOrderFront:)),
+                &NSString::from_str(""),
+            )
+        };
+        unsafe { show_item.setTarget(Some(panel as &AnyObject)); }
+        menu.addItem(&show_item);
+        menu.addItem(&NSMenuItem::separatorItem(marker));
+        let quit_item = unsafe {
+            NSMenuItem::initWithTitle_action_keyEquivalent(
+                NSMenuItem::alloc(marker),
+                &NSString::from_str("退出 Edgedor"),
+                Some(sel!(terminate:)),
+                &NSString::from_str(""),
+            )
+        };
+        let application = NSApplication::sharedApplication(marker);
+        unsafe { quit_item.setTarget(Some(&application as &AnyObject)); }
+        menu.addItem(&quit_item);
+        item.setMenu(Some(&menu));
         if let Some(button) = item.button(marker) { button.setTitle(&NSString::from_str("Edgedor")); }
         *self.status_item.lock().map_err(|_| "status item state unavailable")? = Some(RetainedPanel::leak_status_item(item));
         Ok(())
