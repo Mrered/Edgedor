@@ -31,10 +31,22 @@ impl NativePanel {
     }
 
     pub fn install_status_item(&self) -> Result<(), String> {
+        if self.status_item.lock().map_err(|_| "status item state unavailable")?.is_some() { return Ok(()); }
         let marker = MainThreadMarker::new().ok_or("status item must be created on the main thread")?;
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(-2.0);
         if let Some(button) = item.button(marker) { button.setTitle(&NSString::from_str("Edgedor")); }
         *self.status_item.lock().map_err(|_| "status item state unavailable")? = Some(RetainedPanel::leak_status_item(item));
+        Ok(())
+    }
+
+    pub fn set_status_item_visible(&self, visible: bool) -> Result<(), String> {
+        if visible { return self.install_status_item(); }
+        let mut item = self.status_item.lock().map_err(|_| "status item state unavailable")?;
+        if let Some(pointer) = item.take() {
+            let status_bar = NSStatusBar::systemStatusBar();
+            let item_ref = unsafe { &*(pointer as *const objc2_app_kit::NSStatusItem) };
+            status_bar.removeStatusItem(item_ref);
+        }
         Ok(())
     }
 

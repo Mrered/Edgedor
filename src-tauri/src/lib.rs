@@ -65,6 +65,13 @@ fn set_panel_pinned(pinned: bool, app: AppHandle) -> Result<(), String> {
 fn quit_app(app: AppHandle) { app.exit(0); }
 
 #[tauri::command]
+fn set_menu_bar_icon_visible(visible: bool, app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { app.state::<native_panel::NativePanel>().set_status_item_visible(visible)?; }
+    Ok(())
+}
+
+#[tauri::command]
 fn panel_action(action: &str, app: AppHandle, state: State<'_, PanelState>) -> Result<PanelStatus, String> {
     if !matches!(action, "show" | "focus" | "hide") {
         return Err("unsupported panel action".into());
@@ -103,7 +110,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, preview_file, set_panel_pinned, quit_app])
+        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, preview_file, set_panel_pinned, quit_app, set_menu_bar_icon_visible])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
