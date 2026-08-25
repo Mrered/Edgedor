@@ -1,14 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { createEditor } from '../lib/editor/monaco';
+  import { applyShortcutProfile, createEditor } from '../lib/editor/monaco';
   import * as monaco from 'monaco-editor';
   import type { SessionTab } from '../lib/session';
   export let tab: SessionTab;
   export let fontSize = 14;
+  export let shortcutProfile: 'vscode' | 'sublime' | 'jetbrains' | 'vim' = 'vscode';
+  export let shortcutOverrides: Record<string, string> = {};
   export let onChange: (content: string) => void = () => {};
   let host: HTMLDivElement;
   onMount(() => {
     const editor = createEditor(host, fontSize, tab.language);
+    applyShortcutProfile(editor, shortcutProfile, shortcutOverrides);
     editor.setValue(tab.content);
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP, () => { void editor.getAction('editor.action.quickCommand')?.run(); });
     const subscription = editor.onDidChangeModelContent(() => onChange(editor.getValue()));
