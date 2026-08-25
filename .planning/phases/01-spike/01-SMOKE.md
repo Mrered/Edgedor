@@ -8,11 +8,12 @@
 - `npm run build`：SvelteKit/Vite production build 成功。
 - `cargo check --manifest-path src-tauri/Cargo.toml`：成功。
 - `npm run tauri build -- --target aarch64-apple-darwin --bundles app,dmg`：构建成功，DMG 为 `src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Edgedor_0.1.0_aarch64.dmg`。
+- `cargo check` 同时覆盖 `objc2` 的真实 `NSPanel` owner 与 `NSEvent` 贴边监视器；运行时仍需 macOS 辅助功能权限冒烟。
 
 ## 尚未完成
 
 - `npm run tauri dev` / arm64 DMG 的人工安装启动记录。
-- Swift `NSPanel` 承载 Tauri WebView 的 show/focus/hide/status round-trip。
+- Swift `NSPanel` 承载 Tauri WebView 的 show/focus/hide/status round-trip（当前改用 Rust/objc2 owner，待实机验证）。
 - 实机重复启动、浅深色和中英文切换冒烟。
 
 ## 结论
