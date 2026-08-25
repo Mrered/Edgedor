@@ -15,6 +15,9 @@
   let unlisten: (() => void) | undefined;
   let expiryTimer: number | undefined;
   let showSettings = false;
+  let showSearch = false;
+  let searchQuery = '';
+  let searchInput: HTMLInputElement;
   let notice = '';
   let noticeTimer: number | undefined;
   const editorShortcutCommands: Array<{ id: EditorCommand; label: string }> = [
@@ -81,6 +84,30 @@
   }
   function changeFontSize(delta: number) { persist({ ...session, settings: { ...session.settings, fontSize: Math.max(10, Math.min(32, session.settings.fontSize + delta)) } }); }
   function openSettings() { showSettings = true; }
+  function openSearch() { showSearch = true; window.setTimeout(() => searchInput?.focus(), 0); }
+  function searchResults() {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return [];
+    return session.tabs.flatMap((tab) => {
+      const content = tab.content.toLowerCase();
+      const index = content.indexOf(query);
+      return index < 0 ? [] : [{ tab, index, excerpt: tab.content.slice(Math.max(0, index - 32), index + query.length + 48).replace(/\s+/g, ' ') }];
+    });
+  }
+  function focusSearchResult(tabId: string) { persist(focusTab(session, tabId)); showSearch = false; }
+  async function refreshPreview(tab: SessionTab) {
+    if (!tab.filePath || tab.kind !== 'preview') return;
+    try {
+      const preview = await invoke<{ path: string; data_url: string; mime: string }>('preview_file', { path: tab.filePath });
+      persist(updateTab(session, tab.id, { content: preview.data_url, previewDataUrl: preview.data_url, previewMime: preview.mime }));
+      showNotice(`${tab.title} 已刷新`);
+    } catch (error) { showNotice(`刷新失败：${String(error)}`); }
+  }
+  function clearWorkspace() {
+    if (!window.confirm('清空所有标签和撤销槽？真实文件不会被删除。')) return;
+    persist({ ...createSessionState(), settings: session.settings });
+    showNotice('工作区已清空');
+  }
   function addSplit() {
     if (session.groups.length >= 2) { showNotice('当前版本支持两个编辑分区'); return; }
     const next = createGroup(session, 'vertical');
@@ -173,6 +200,7 @@
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 'w') { event.preventDefault(); closeActive(); }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 't') { event.preventDefault(); restoreClosed(); }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'q') { event.preventDefault(); void invoke('quit_app'); }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'f') { event.preventDefault(); openSearch(); }
       if ((event.metaKey || event.ctrlKey) && event.key === ',') { event.preventDefault(); (document.querySelector('select[aria-label="编辑器快捷键方案"]') as HTMLSelectElement | null)?.focus(); }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -194,6 +222,7 @@
     <button onclick={addSplit} disabled={session.groups.length >= 2} title="新建编辑分区（最多两个）">分区</button>
     <button onclick={closeSplit} disabled={session.groups.length <= 1} title="合并当前编辑分区">合并</button>
     <span class="toolbar-spacer"></span>
+    <button onclick={openSearch} title="跨标签查找（⌘⇧F）">查找</button>
     <button onclick={openSettings} aria-haspopup="dialog">设置</button>
     <button class="pin" aria-pressed={pinned} onclick={togglePinned}>{pinned ? '取消固定' : '固定面板'}</button>
   </header>
@@ -212,13 +241,27 @@
       {@const tab = groupTab(group)}
       <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={`编辑分区 ${group.id}`}>
         {#if tab}
-          {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} />{:else}{#key `${tab.id}:${session.settings.fontSize}:${session.settings.shortcutProfile}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} onChange={(content) => editContentFor(tab.id, content)} onStateChange={(editor) => editStateFor(tab.id, editor)} />{/key}{/if}
+          {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} onRefresh={() => refreshPreview(tab)} />{:else}{#key `${tab.id}:${session.settings.fontSize}:${session.settings.shortcutProfile}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} onChange={(content) => editContentFor(tab.id, content)} onStateChange={(editor) => editStateFor(tab.id, editor)} />{/key}{/if}
         {:else}<button class="empty" onclick={() => { const next = addTab(session, createTab(), group.id); persist(next); }}>新建分区标签</button>{/if}
       </section>
     {/each}
   </section>
   {#if notice}<div class="notice" role="status">{notice}</div>{/if}
   <footer aria-live="polite">{status.bridgeReady ? '原生面板已连接' : '正在连接原生面板…'} · {session.tabs.length} 个标签 · 撤销槽 {session.undoSlots.length}/10</footer>
+  {#if showSearch}
+    <div class="search-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) showSearch = false; }}>
+      <div class="search-panel" role="dialog" aria-modal="true" aria-label="跨标签查找">
+        <div class="settings-heading"><h2>跨标签查找</h2><button aria-label="关闭查找" onclick={() => showSearch = false}>×</button></div>
+        <input bind:this={searchInput} bind:value={searchQuery} placeholder="输入要查找的内容" aria-label="查找内容" />
+        <div class="search-results">
+          {#if searchQuery.trim() && searchResults().length === 0}<p>没有匹配内容</p>{/if}
+          {#each searchResults() as result (result.tab.id)}
+            <button class="search-result" onclick={() => focusSearchResult(result.tab.id)}><strong>{result.tab.title}</strong><span>{result.excerpt}</span></button>
+          {/each}
+        </div>
+      </div>
+    </div>
+  {/if}
   {#if showSettings}
     <div class="settings-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) showSettings = false; }}>
       <div class="settings-panel" role="dialog" aria-modal="true" aria-label="Edgedor 设置">
@@ -232,6 +275,7 @@
         <label class="checkbox"><input type="checkbox" checked={session.settings.preserveOnRestart} onchange={setPreserveOnRestart} />重启后恢复最后工作状态</label>
         <label class="checkbox"><input type="checkbox" checked={session.settings.showMenuBarIcon} onchange={setMenuBarIcon} />显示菜单栏图标</label>
         <p class="settings-note">临时标签 24 小时未访问会过期，并进入可撤销槽。文件只有触发保存时才写回原路径。</p>
+        <button class="danger" onclick={clearWorkspace}>清空标签和撤销槽</button>
         <button class="done" onclick={() => showSettings = false}>完成</button>
       </div>
     </div>
@@ -276,6 +320,13 @@
   .notice { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 7px 12px; border-radius: 9px; color: var(--text); background: color-mix(in srgb, var(--panel) 88%, var(--text)); box-shadow: 0 5px 25px rgba(0,0,0,.18); font-size: 12px; }
   footer { padding: 6px 16px 10px; font-size: 11px; color: var(--muted); }
   .settings-backdrop { position: fixed; inset: 0; z-index: 10; display: flex; justify-content: flex-end; background: rgba(0,0,0,.16); }
+  .search-backdrop { position: fixed; inset: 0; z-index: 11; display: grid; place-items: start center; padding-top: 12vh; background: rgba(0,0,0,.16); }
+  .search-panel { width: min(620px, 90vw); max-height: 70vh; padding: 16px; display: flex; flex-direction: column; gap: 12px; color: var(--text); background: var(--panel); border-radius: 12px; box-shadow: 0 16px 45px rgba(0,0,0,.25); }
+  .search-panel > input { border: 1px solid color-mix(in srgb, var(--text) 15%, transparent); border-radius: 7px; padding: 9px; color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
+  .search-results { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 5px; }
+  .search-results p { margin: 8px 0; color: var(--muted); font-size: 12px; }
+  .search-result { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; border: 0; border-radius: 7px; padding: 8px; text-align: left; color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
+  .search-result span { color: var(--muted); font: 11px/1.4 ui-monospace, monospace; }
   .settings-panel { width: min(360px, 90vw); height: 100%; padding: 20px; display: flex; flex-direction: column; gap: 16px; color: var(--text); background: var(--panel); box-shadow: -10px 0 30px rgba(0,0,0,.15); }
   .settings-heading { display: flex; align-items: center; justify-content: space-between; }
   .settings-heading h2 { margin: 0; font-size: 18px; }
@@ -289,4 +340,5 @@
   .font-controls output { min-width: 44px; text-align: center; color: var(--text); }
   .settings-note { margin: auto 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
   .settings-panel .done { width: 100%; padding: 8px; color: var(--text); }
+  .settings-panel .danger { color: #b42318; }
 </style>
