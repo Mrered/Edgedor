@@ -62,6 +62,9 @@ fn set_panel_pinned(pinned: bool, app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn quit_app(app: AppHandle) { app.exit(0); }
+
+#[tauri::command]
 fn panel_action(action: &str, app: AppHandle, state: State<'_, PanelState>) -> Result<PanelStatus, String> {
     if !matches!(action, "show" | "focus" | "hide") {
         return Err("unsupported panel action".into());
@@ -100,7 +103,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, preview_file, set_panel_pinned])
+        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, preview_file, set_panel_pinned, quit_app])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
