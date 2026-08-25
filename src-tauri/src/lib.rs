@@ -18,10 +18,12 @@ struct PanelState(std::sync::Mutex<PanelStatus>);
 #[tauri::command]
 fn save_file(path: &str, content: &str, encoding: Option<&str>, line_ending: Option<&str>) -> Result<(), String> {
     if path.is_empty() { return Err("save path is empty".into()); }
-    let normalized = match line_ending.unwrap_or("\n") { "\r\n" => content.replace('\n', "\r\n"), "\r" => content.replace('\n', "\r"), _ => content.to_string() };
+    let source = content.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = match line_ending.unwrap_or("\n") { "\r\n" => source.replace('\n', "\r\n"), "\r" => source.replace('\n', "\r"), _ => source };
     let bytes = match encoding.unwrap_or("utf-8").to_ascii_lowercase().as_str() {
-        "utf-16le" => encoding_rs::UTF_16LE.encode(&normalized).0.into_owned(),
-        "utf-16be" => encoding_rs::UTF_16BE.encode(&normalized).0.into_owned(),
+        "utf-8-bom" => [vec![0xEF, 0xBB, 0xBF], normalized.as_bytes().to_vec()].concat(),
+        "utf-16le" => [vec![0xFF, 0xFE], encoding_rs::UTF_16LE.encode(&normalized).0.into_owned()].concat(),
+        "utf-16be" => [vec![0xFE, 0xFF], encoding_rs::UTF_16BE.encode(&normalized).0.into_owned()].concat(),
         "gb18030" => encoding_rs::GB18030.encode(&normalized).0.into_owned(),
         _ => normalized.as_bytes().to_vec(),
     };
@@ -39,8 +41,8 @@ fn open_text_file(path: &str) -> Result<OpenedFile, String> {
     let size = std::fs::metadata(path).map_err(|error| format!("无法读取文件信息：{error}"))?.len();
     if size > 20 * 1024 * 1024 { return Err("文本文件超过 20 MB 限制".into()); }
     let bytes = std::fs::read(path).map_err(|error| format!("不支持或无法读取此文件：{error}"))?;
-    let (encoding, content) = if bytes.starts_with(&[0xFF, 0xFE]) { ("utf-16le", encoding_rs::UTF_16LE.decode(&bytes[2..]).0.into_owned()) } else if bytes.starts_with(&[0xFE, 0xFF]) { ("utf-16be", encoding_rs::UTF_16BE.decode(&bytes[2..]).0.into_owned()) } else if let Ok(content) = std::str::from_utf8(&bytes) { ("utf-8", content.to_string()) } else { ("gb18030", encoding_rs::GB18030.decode(&bytes).0.into_owned()) };
-    let language = std::path::Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or("plaintext").to_string();
+    let (encoding, content) = if bytes.starts_with(&[0xFF, 0xFE]) { ("utf-16le", encoding_rs::UTF_16LE.decode(&bytes[2..]).0.into_owned()) } else if bytes.starts_with(&[0xFE, 0xFF]) { ("utf-16be", encoding_rs::UTF_16BE.decode(&bytes[2..]).0.into_owned()) } else if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) { ("utf-8-bom", String::from_utf8_lossy(&bytes[3..]).into_owned()) } else if let Ok(content) = std::str::from_utf8(&bytes) { ("utf-8", content.to_string()) } else { ("gb18030", encoding_rs::GB18030.decode(&bytes).0.into_owned()) };
+    let language = std::path::Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or("plaintext").to_ascii_lowercase();
     let line_ending = if content.contains("\r\n") { "\r\n" } else if content.contains('\r') { "\r" } else { "\n" };
     Ok(OpenedFile { path: path.to_string(), content, language, encoding: encoding.to_string(), line_ending: line_ending.to_string() })
 }
