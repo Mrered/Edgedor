@@ -8,7 +8,7 @@
   export let onChange: (content: string) => void = () => {};
   let host: HTMLDivElement;
   onMount(() => {
-    const editor = createEditor(host, fontSize);
+    const editor = createEditor(host, fontSize, tab.language);
     editor.setValue(tab.content);
     editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP, () => { void editor.getAction('editor.action.quickCommand')?.run(); });
     const subscription = editor.onDidChangeModelContent(() => onChange(editor.getValue()));
