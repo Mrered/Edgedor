@@ -3,6 +3,16 @@ name: Release Edgedor
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build (for example, v0.1.0)
+        required: true
+        type: string
+
+concurrency:
+  group: edgedor-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -11,6 +21,8 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -23,9 +35,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: Edgedor ${{ github.ref_name }}
-          releaseBody: Automated arm64 macOS build.
+          tagName: ${{ inputs.tag || github.ref_name }}
+          releaseName: Edgedor ${{ inputs.tag || github.ref_name }}
+          releaseBody: |
+            Edgedor 的 macOS arm64 构建，目标系统为 macOS 26 Tahoe 及以上版本。
+
+            安装前请阅读仓库 README 中的权限和限制说明。当前构建未启用 Tauri Updater 自动更新。
           releaseDraft: true
           prerelease: false
           args: --target aarch64-apple-darwin --bundles app,dmg

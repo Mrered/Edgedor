@@ -44,4 +44,8 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: edgedor-arm64
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/**
+          path: |
+            src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/aarch64-apple-darwin/release/bundle/macos/*.app
+          if-no-files-found: error
+          retention-days: 14
