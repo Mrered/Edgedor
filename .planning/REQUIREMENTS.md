@@ -114,18 +114,65 @@
 
 ## Traceability
 
-| Requirement Group | Phase | Status |
-|-------------------|-------|--------|
-| FOUND-01..04 | Phase 1 | Pending |
-| PANEL-01..10 | Phase 2 | Pending |
-| EDIT-01..11 | Phase 3 | Pending |
-| SESSION-01..10 | Phase 4 | Pending |
-| FILE-01..11 | Phase 5 | Pending |
-| DIST-01..07 | Phase 6 | Pending |
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| FOUND-01 | Phase 1 | Pending |
+| FOUND-02 | Phase 1 | Pending |
+| FOUND-03 | Phase 1 | Pending |
+| FOUND-04 | Phase 1 | Pending |
+| PANEL-01 | Phase 2 | Pending |
+| PANEL-02 | Phase 2 | Pending |
+| PANEL-03 | Phase 2 | Pending |
+| PANEL-04 | Phase 2 | Pending |
+| PANEL-05 | Phase 2 | Pending |
+| PANEL-06 | Phase 2 | Pending |
+| PANEL-07 | Phase 2 | Pending |
+| PANEL-08 | Phase 2 | Pending |
+| PANEL-09 | Phase 2 | Pending |
+| PANEL-10 | Phase 2 | Pending |
+| EDIT-01 | Phase 3 | Pending |
+| EDIT-02 | Phase 3 | Pending |
+| EDIT-03 | Phase 3 | Pending |
+| EDIT-04 | Phase 3 | Pending |
+| EDIT-05 | Phase 3 | Pending |
+| EDIT-06 | Phase 3 | Pending |
+| EDIT-07 | Phase 3 | Pending |
+| EDIT-08 | Phase 3 | Pending |
+| EDIT-09 | Phase 3 | Pending |
+| EDIT-10 | Phase 3 | Pending |
+| EDIT-11 | Phase 3 | Pending |
+| SESSION-01 | Phase 4 | Pending |
+| SESSION-02 | Phase 4 | Pending |
+| SESSION-03 | Phase 4 | Pending |
+| SESSION-04 | Phase 4 | Pending |
+| SESSION-05 | Phase 4 | Pending |
+| SESSION-06 | Phase 4 | Pending |
+| SESSION-07 | Phase 4 | Pending |
+| SESSION-08 | Phase 4 | Pending |
+| SESSION-09 | Phase 4 | Pending |
+| SESSION-10 | Phase 4 | Pending |
+| FILE-01 | Phase 5 | Pending |
+| FILE-02 | Phase 5 | Pending |
+| FILE-03 | Phase 5 | Pending |
+| FILE-04 | Phase 5 | Pending |
+| FILE-05 | Phase 5 | Pending |
+| FILE-06 | Phase 5 | Pending |
+| FILE-07 | Phase 5 | Pending |
+| FILE-08 | Phase 5 | Pending |
+| FILE-09 | Phase 5 | Pending |
+| FILE-10 | Phase 5 | Pending |
+| FILE-11 | Phase 5 | Pending |
+| DIST-01 | Phase 6 | Pending |
+| DIST-02 | Phase 6 | Pending |
+| DIST-03 | Phase 6 | Pending |
+| DIST-04 | Phase 6 | Pending |
+| DIST-05 | Phase 6 | Pending |
+| DIST-06 | Phase 6 | Pending |
+| DIST-07 | Phase 6 | Pending |
 
 **Coverage:**
-- v1 requirements: 57 total
-- Mapped to phases: 57
+- v1 requirements: 53 total
+- Mapped to phases: 53
 - Unmapped: 0 ✓
 
 ## Definition of Done
