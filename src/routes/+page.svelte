@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
+  import { open, save } from '@tauri-apps/plugin-dialog';
   import EditorSurface from '../components/EditorSurface.svelte';
   import ToolbarMount from '../components/ToolbarMount.svelte';
   import { listenPanelStatus, panelAction, type PanelStatus } from '../lib/tauri/panel';
@@ -19,7 +20,7 @@
   function editContent(content: string) { if (activeTab) persist(updateTab(session, activeTab.id, { content })); }
   async function saveActive() {
     if (!activeTab) return;
-    const path = activeTab.filePath ?? window.prompt('保存临时标签到文件路径', `${activeTab.title.replace(/[^\w.-]+/g, '-')}.txt`);
+    const path = activeTab.filePath ?? await save({ defaultPath: `${activeTab.title.replace(/[^\w.-]+/g, '-')}.txt`, filters: [{ name: '文本文件', extensions: ['txt', 'md', 'json', 'js', 'ts', 'rs', 'py'] }] });
     if (!path) return;
     try { await invoke('save_file', { path, content: activeTab.content }); persist(updateTab(session, activeTab.id, { filePath: path, kind: 'file' })); }
     catch (error) { window.alert(`保存失败：${String(error)}`); }
@@ -29,9 +30,11 @@
   function setPreserveOnRestart(event: Event) { const preserve = (event.currentTarget as HTMLInputElement).checked; const next = { ...session, settings: { ...session.settings, preserveOnRestart: preserve } }; session = next; if (preserve) localStorage.setItem('edgedor.session', serializeSession(next)); else localStorage.removeItem('edgedor.session'); }
   function changeFontSize(delta: number) { persist({ ...session, settings: { ...session.settings, fontSize: Math.max(10, Math.min(32, session.settings.fontSize + delta)) } }); }
   async function openTextFile() {
-    const path = window.prompt('打开文本文件路径');
+    const path = await open({ multiple: false, directory: false });
     if (!path) return;
-    try { const opened = await invoke<{ path: string; content: string; language: string }>('open_text_file', { path }); persist(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, title: path.split('/').at(-1) }))); }
+    const selectedPath = Array.isArray(path) ? path[0] : path;
+    if (!selectedPath) return;
+    try { const opened = await invoke<{ path: string; content: string; language: string }>('open_text_file', { path: selectedPath }); persist(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, title: selectedPath.split('/').at(-1) }))); }
     catch (error) { window.alert(String(error)); }
   }
   async function openDroppedFile(event: DragEvent) {
