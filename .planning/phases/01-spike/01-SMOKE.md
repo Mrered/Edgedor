@@ -7,6 +7,7 @@
 - `npm run check`：Svelte diagnostics 0 errors / 0 warnings。
 - `npm run build`：SvelteKit/Vite production build 成功。
 - `cargo check --manifest-path src-tauri/Cargo.toml`：成功。
+- `npm run tauri build -- --target aarch64-apple-darwin --bundles app,dmg`：构建成功，DMG 为 `src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Edgedor_0.1.0_aarch64.dmg`。
 
 ## 尚未完成
 
