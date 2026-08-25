@@ -7,6 +7,7 @@
   import ToolbarMount from '../components/ToolbarMount.svelte';
   import { listenPanelStatus, panelAction, type PanelStatus } from '../lib/tauri/panel';
   import { addTab, closeTab, createGroup, createSessionState, createTab, deserializeSession, expireTabs, focusTab, removeGroup, restoreLatest, serializeSession, setGroupRatio, updateTab, type EditorGroup, type EditorSnapshot, type SessionState, type SessionTab } from '../lib/session';
+  import type { EditorCommand } from '../lib/shortcuts';
   let status: PanelStatus = { visible: true, focused: true, bridgeReady: false };
   let pinned = false;
   let session: SessionState = createSessionState();
@@ -16,6 +17,16 @@
   let showSettings = false;
   let notice = '';
   let noticeTimer: number | undefined;
+  const editorShortcutCommands: Array<{ id: EditorCommand; label: string }> = [
+    { id: 'selectNextOccurrence', label: '逐个选择相同内容' },
+    { id: 'selectAllOccurrences', label: '选择所有相同内容' },
+    { id: 'addCursorAbove', label: '上方添加光标' },
+    { id: 'addCursorBelow', label: '下方添加光标' },
+    { id: 'moveLineUp', label: '上移行' },
+    { id: 'moveLineDown', label: '下移行' },
+    { id: 'deleteLine', label: '删除行' },
+    { id: 'toggleComment', label: '切换行注释' }
+  ];
   $: activeTab = session.tabs.find((tab) => tab.id === session.groups.find((group) => group.id === session.activeGroupId)?.activeTabId);
   function persist(next: SessionState) { session = next; if (session.settings.preserveOnRestart) localStorage.setItem('edgedor.session', serializeSession(session)); }
   function newTab() { persist(addTab(session, createTab())); }
@@ -49,7 +60,7 @@
   }
   async function togglePinned() { pinned = !pinned; await invoke('set_panel_pinned', { pinned }); }
   function setShortcutProfile(event: Event) { const value = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['shortcutProfile']; persist({ ...session, settings: { ...session.settings, shortcutProfile: value } }); }
-  function setNextMatchOverride(event: Event) { const value = (event.currentTarget as HTMLInputElement).value.trim(); const shortcutOverrides = { ...session.settings.shortcutOverrides }; if (value) shortcutOverrides.selectNextOccurrence = value; else delete shortcutOverrides.selectNextOccurrence; persist({ ...session, settings: { ...session.settings, shortcutOverrides } }); }
+  function setShortcutOverride(command: EditorCommand, event: Event) { const value = (event.currentTarget as HTMLInputElement).value.trim(); const shortcutOverrides = { ...session.settings.shortcutOverrides }; if (value) shortcutOverrides[command] = value; else delete shortcutOverrides[command]; persist({ ...session, settings: { ...session.settings, shortcutOverrides } }); }
   function setPreserveOnRestart(event: Event) { const preserve = (event.currentTarget as HTMLInputElement).checked; const next = { ...session, settings: { ...session.settings, preserveOnRestart: preserve } }; session = next; if (preserve) localStorage.setItem('edgedor.session', serializeSession(next)); else localStorage.removeItem('edgedor.session'); }
   async function setMenuBarIcon(event: Event) { const visible = (event.currentTarget as HTMLInputElement).checked; persist({ ...session, settings: { ...session.settings, showMenuBarIcon: visible } }); await invoke('set_menu_bar_icon_visible', { visible }); }
   async function setEdgeModifier(event: Event) {
@@ -176,7 +187,7 @@
         <label>边缘呼出修饰键<select aria-label="边缘呼出修饰键" value={session.settings.edgeModifier} onchange={setEdgeModifier}><option value="command">Command（⌘）</option><option value="option">Option（⌥）</option><option value="control">Control（⌃）</option><option value="shift">Shift（⇧）</option></select></label>
         <label>标签布局<select aria-label="标签布局" value={session.settings.tabLayout} onchange={setTabLayout}><option value="top">顶部横向滚动</option><option value="left">左侧标签</option><option value="right">右侧标签</option></select></label>
         {#if session.groups.length === 2}<label>分区比例 <input aria-label="分区比例" type="range" min="0.2" max="0.8" step="0.05" value={splitRatio()} oninput={setSplitRatio} /></label>{/if}
-        <label>逐个选择相同内容快捷键<input aria-label="逐个选择相同内容快捷键" placeholder="例如 Cmd+D" value={session.settings.shortcutOverrides.selectNextOccurrence ?? ''} onchange={setNextMatchOverride} /></label>
+        <fieldset class="shortcut-list"><legend>自定义编辑器快捷键</legend>{#each editorShortcutCommands as shortcut}<label>{shortcut.label}<input aria-label={`${shortcut.label}快捷键`} placeholder="留空使用方案默认值" value={session.settings.shortcutOverrides[shortcut.id] ?? ''} onchange={(event) => setShortcutOverride(shortcut.id, event)} /></label>{/each}</fieldset>
         <label>编辑器字号 <span class="font-controls"><button onclick={() => changeFontSize(-1)}>−</button><output>{session.settings.fontSize}px</output><button onclick={() => changeFontSize(1)}>＋</button></span></label>
         <label class="checkbox"><input type="checkbox" checked={session.settings.preserveOnRestart} onchange={setPreserveOnRestart} />重启后恢复最后工作状态</label>
         <label class="checkbox"><input type="checkbox" checked={session.settings.showMenuBarIcon} onchange={setMenuBarIcon} />显示菜单栏图标</label>
@@ -230,6 +241,8 @@
   .settings-heading h2 { margin: 0; font-size: 18px; }
   .settings-heading button { padding: 2px 8px; font-size: 20px; }
   .settings-panel label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
+  .shortcut-list { min-width: 0; margin: 0; padding: 10px; display: flex; flex-direction: column; gap: 10px; border: 1px solid color-mix(in srgb, var(--text) 14%, transparent); border-radius: 8px; }
+  .shortcut-list legend { padding: 0 4px; color: var(--muted); font-size: 12px; }
   .settings-panel select, .settings-panel input:not([type="checkbox"]) { border: 1px solid color-mix(in srgb, var(--text) 15%, transparent); border-radius: 7px; padding: 7px; color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
   .settings-panel .checkbox { flex-direction: row; align-items: center; }
   .font-controls { display: flex; align-items: center; gap: 8px; }

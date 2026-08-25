@@ -1,6 +1,6 @@
 {
   "name": "edgedor",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "A macOS edge workspace for transient code and text",
   "type": "module",
   "scripts": {
