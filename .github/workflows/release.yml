@@ -41,6 +41,6 @@ jobs:
             Edgedor 的 macOS arm64 构建，目标系统为 macOS 26 Tahoe 及以上版本。
 
             安装前请阅读仓库 README 中的权限和限制说明。当前构建未启用 Tauri Updater 自动更新。
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: --target aarch64-apple-darwin --bundles app,dmg

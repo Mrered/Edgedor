@@ -4,7 +4,7 @@ Edgedor 是面向 macOS 26 Tahoe 和 Apple Silicon 的临时代码工作台。�
 
 ## 下载与安装
 
-- [下载最新 Release](https://github.com/Mrered/Edgedor/releases)：发布版本由 tag 工作流生成，当前会先作为草稿 Release，发布后才会出现在这里。
+- [下载最新 Release](https://github.com/Mrered/Edgedor/releases)：发布版本由 tag 工作流自动生成并正式发布。
 - [查看主分支构建](https://github.com/Mrered/Edgedor/actions/workflows/ci.yml)：打开最新成功的 `Edgedor CI` 运行，在页面底部下载 `edgedor-arm64` artifact。该构建保留 14 天。
 - 下载 `.dmg` 后打开并将 `Edgedor.app` 拖入“应用程序”文件夹。当前包尚未配置 Apple Developer 签名和公证；如果 macOS 首次阻止打开，请在 Finder 中右键应用选择“打开”，确认来源可信后再运行，不要关闭系统 Gatekeeper。
 
@@ -48,7 +48,7 @@ npm run tauri dev
 
 ## 发布与自动更新状态
 
-推送 `v*` tag 会触发 `.github/workflows/release.yml`，在 macOS runner 上构建 arm64 `.app` 和 `.dmg`，并创建草稿 Release。检查通过的 `main` push 会触发 `.github/workflows/ci.yml`，将同样的安装包作为可下载 artifact 保存 14 天。
+推送 `v*` tag 会触发 `.github/workflows/release.yml`，在 macOS runner 上构建 arm64 `.app` 和 `.dmg`，并自动发布 Release。检查通过的 `main` push 会触发 `.github/workflows/ci.yml`，将同样的安装包作为可下载 artifact 保存 14 天。
 
 Tauri Updater 当前**未启用**：仓库没有 updater 公钥、私钥或 `latest.json`，也不会在 CI 中生成密钥。现阶段请从 GitHub Release 手动下载；后续要启用自动更新时，需要单独生成并安全保存 Tauri updater 私钥、配置 GitHub Actions Secret 和签名公钥后再实施。
 
