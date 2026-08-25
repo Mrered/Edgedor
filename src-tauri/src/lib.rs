@@ -21,6 +21,16 @@ fn save_file(path: &str, content: &str) -> Result<(), String> {
     std::fs::write(path, content).map_err(|error| error.to_string())
 }
 
+#[derive(Serialize)]
+struct OpenedFile { path: String, content: String, language: String }
+
+#[tauri::command]
+fn open_text_file(path: &str) -> Result<OpenedFile, String> {
+    let content = std::fs::read_to_string(path).map_err(|error| format!("不支持或无法读取此文件：{error}"))?;
+    let language = std::path::Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or("plaintext").to_string();
+    Ok(OpenedFile { path: path.to_string(), content, language })
+}
+
 #[tauri::command]
 fn set_panel_pinned(pinned: bool, app: AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
@@ -66,7 +76,7 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![panel_action, save_file, set_panel_pinned])
+        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, set_panel_pinned])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
