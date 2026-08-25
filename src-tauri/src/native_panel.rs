@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use objc2::runtime::AnyObject;
 use objc2::{MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSBackingStoreType, NSPanel, NSView, NSWindowStyleMask, NSFloatingWindowLevel};
+use objc2_app_kit::{NSBackingStoreType, NSPanel, NSView, NSWindowStyleMask, NSFloatingWindowLevel, NSScreen};
 use objc2_foundation::{NSPoint, NSRect, NSSize};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
@@ -27,8 +27,21 @@ impl NativePanel {
     pub fn start_edge_trigger(&self, app: &AppHandle) -> Result<(), String> {
         let app = app.clone();
         self.trigger.start(edge_trigger::EdgeTriggerConfig::default(), move |_edge| {
-            if let Some(panel) = app.try_state::<NativePanel>() { let _ = panel.action("show"); }
+            if let Some(panel) = app.try_state::<NativePanel>() { let _ = panel.show_at_edge(_edge); }
         })
+    }
+
+    pub fn show_at_edge(&self, edge: edge_trigger::Edge) -> Result<(), String> {
+        let panel = self.create()?;
+        let marker = MainThreadMarker::new().ok_or("NSPanel must be shown on the main thread")?;
+        let screen = NSScreen::mainScreen(marker).ok_or("no main screen available")?;
+        let frame = screen.visibleFrame();
+        let width = (frame.size.width * 0.35).clamp(320.0, 960.0);
+        let x = match edge { edge_trigger::Edge::Left => frame.origin.x, edge_trigger::Edge::Right => frame.origin.x + frame.size.width - width };
+        panel.setFrame_display(NSRect::new(NSPoint::new(x, frame.origin.y), NSSize::new(width, frame.size.height)), true);
+        panel.orderFrontRegardless();
+        panel.makeKeyAndOrderFront(None::<&AnyObject>);
+        Ok(())
     }
 
     fn panel(&self) -> Option<&'static NSPanel> {
