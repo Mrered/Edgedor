@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { createEditor } from '../lib/editor/monaco';
+  import * as monaco from 'monaco-editor';
   import type { SessionTab } from '../lib/session';
   export let tab: SessionTab;
   export let fontSize = 14;
@@ -9,6 +10,7 @@
   onMount(() => {
     const editor = createEditor(host, fontSize);
     editor.setValue(tab.content);
+    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP, () => { void editor.getAction('editor.action.quickCommand')?.run(); });
     const subscription = editor.onDidChangeModelContent(() => onChange(editor.getValue()));
     editor.focus();
     return () => { subscription.dispose(); const model = editor.getModel(); editor.dispose(); model?.dispose(); };
