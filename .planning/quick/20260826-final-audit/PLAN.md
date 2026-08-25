@@ -1,6 +1,6 @@
 ---
 quick: 20260826-final-audit
-status: complete
+status: in_progress
 ---
 
 # 最终验收缺口修复
@@ -15,3 +15,4 @@ status: complete
 2. 确保关闭恢复时不会继续读取或写入旧的本地状态。
 3. 保存 Monaco 多光标/列选择视图状态，并降低预览数据进入恢复存储的风险。
 4. 让原生 WebView 随 NSPanel 尺寸变化，并重新构建发布版本。
+5. 为侧边面板增加滑入、换侧穿越和滑出动画，并限制分区按钮到已实现的双分区布局。

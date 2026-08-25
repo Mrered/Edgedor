@@ -82,6 +82,7 @@
   function changeFontSize(delta: number) { persist({ ...session, settings: { ...session.settings, fontSize: Math.max(10, Math.min(32, session.settings.fontSize + delta)) } }); }
   function openSettings() { showSettings = true; }
   function addSplit() {
+    if (session.groups.length >= 2) { showNotice('当前版本支持两个编辑分区'); return; }
     const next = createGroup(session, 'vertical');
     persist(addTab(next, createTab(), next.activeGroupId));
   }
@@ -190,7 +191,7 @@
     <button onclick={openTextFile}>打开文件</button>
     <button onclick={openPreviewFile}>预览文件</button>
     <button onclick={saveActive} disabled={!activeTab || activeTab.kind === 'preview'} title="保存当前标签（⌘S）">保存{activeTab?.dirty ? ' ·' : ''}</button>
-    <button onclick={addSplit} title="新建编辑分区">分区</button>
+    <button onclick={addSplit} disabled={session.groups.length >= 2} title="新建编辑分区（最多两个）">分区</button>
     <button onclick={closeSplit} disabled={session.groups.length <= 1} title="合并当前编辑分区">合并</button>
     <span class="toolbar-spacer"></span>
     <button onclick={openSettings} aria-haspopup="dialog">设置</button>

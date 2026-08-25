@@ -13,6 +13,8 @@ use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSAutoresizing
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
+const PANEL_ANIMATION_MS: u64 = 180;
+
 #[path = "edge_trigger.rs"]
 pub mod edge_trigger;
 
@@ -119,9 +121,20 @@ impl NativePanel {
         };
         let width = (frame.size.width * ratio).clamp(320.0, frame.size.width * 0.60);
         let x = match edge { edge_trigger::Edge::Left => frame.origin.x, edge_trigger::Edge::Right => frame.origin.x + frame.size.width - width };
-        panel.setFrame_display(NSRect::new(NSPoint::new(x, frame.origin.y), NSSize::new(width, frame.size.height)), true);
+        let target = NSRect::new(NSPoint::new(x, frame.origin.y), NSSize::new(width, frame.size.height));
+        let start = if panel.isVisible() {
+            panel.frame()
+        } else {
+            let start_x = match edge {
+                edge_trigger::Edge::Left => target.origin.x - target.size.width,
+                edge_trigger::Edge::Right => target.origin.x + target.size.width,
+            };
+            NSRect::new(NSPoint::new(start_x, target.origin.y), target.size)
+        };
+        panel.setFrame_display(start, false);
         panel.orderFrontRegardless();
         panel.makeKeyAndOrderFront(None::<&AnyObject>);
+        animate_panel_frame(panel, start, target, false);
         Ok(())
     }
 
@@ -187,7 +200,7 @@ impl NativePanel {
                 Ok((true, true))
             }
             "hide" => {
-                panel.orderOut(None::<&AnyObject>);
+                animate_panel_out(panel);
                 Ok((false, false))
             }
             _ => Err("unsupported panel action".into()),
@@ -215,7 +228,7 @@ impl NativePanel {
             }
             let panel = unsafe { &*(panel as *const NSPanel) };
             if panel.isVisible() {
-                panel.orderOut(None::<&AnyObject>);
+                animate_panel_out(panel);
             }
         });
         let token = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
@@ -227,6 +240,53 @@ impl NativePanel {
             Some(RetainedPanel::leak_event_monitor(token));
         Ok(())
     }
+}
+
+fn animate_panel_frame(panel: &'static NSPanel, start: NSRect, target: NSRect, hide_after: bool) {
+    let steps = 12_u64;
+    for step in 1..=steps {
+        let panel = panel as *const NSPanel as usize;
+        let from = start;
+        let to = target;
+        let delay = PANEL_ANIMATION_MS * step / steps;
+        let _ = dispatch2::DispatchQueue::main().after(
+            dispatch2::DispatchTime::NOW.time((delay * 1_000_000) as i64),
+            move || {
+                let panel = unsafe { &*(panel as *const NSPanel) };
+                let progress = step as f64 / steps as f64;
+                let eased = 1.0 - (1.0 - progress) * (1.0 - progress);
+                let frame = NSRect::new(
+                    NSPoint::new(
+                        from.origin.x + (to.origin.x - from.origin.x) * eased,
+                        from.origin.y + (to.origin.y - from.origin.y) * eased,
+                    ),
+                    NSSize::new(
+                        from.size.width + (to.size.width - from.size.width) * eased,
+                        from.size.height + (to.size.height - from.size.height) * eased,
+                    ),
+                );
+                panel.setFrame_display(frame, true);
+                if hide_after && step == steps { panel.orderOut(None::<&AnyObject>); }
+            },
+        );
+    }
+}
+
+fn animate_panel_out(panel: &'static NSPanel) {
+    if !panel.isVisible() { return; }
+    let current = panel.frame();
+    let marker = match MainThreadMarker::new() { Some(marker) => marker, None => return };
+    let screen = screen_at(NSEvent::mouseLocation(), marker).or_else(|| NSScreen::mainScreen(marker));
+    let Some(screen) = screen else { panel.orderOut(None::<&AnyObject>); return };
+    let frame = screen.visibleFrame();
+    let center_x = current.origin.x + current.size.width / 2.0;
+    let target_x = if center_x < frame.origin.x + frame.size.width / 2.0 {
+        frame.origin.x - current.size.width
+    } else {
+        frame.origin.x + frame.size.width
+    };
+    let target = NSRect::new(NSPoint::new(target_x, current.origin.y), current.size);
+    animate_panel_frame(panel, current, target, true);
 }
 
 struct RetainedPanel;
