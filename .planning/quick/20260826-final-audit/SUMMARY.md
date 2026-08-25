@@ -13,6 +13,7 @@ status: complete
 - Vim 方案接入 `monaco-vim` 编辑区模式。
 - 原始 Tauri 宿主窗口默认隐藏，WKWebView 设置为随 NSPanel 尺寸变化自动填充。
 - 面板增加 180ms 滑入、换侧穿越和滑出动画；分区入口限制为当前已实现的两个编辑分区。
+- 工具栏和 `⌘⇧F` 提供跨标签查找；预览标签可手动刷新；设置可清空标签与撤销槽而不触碰真实文件。
 
 ## 验证
 
@@ -23,3 +24,4 @@ status: complete
 - GitHub CI `32904051866` 成功。
 - GitHub Release `32904324672` 成功，`v0.1.7` 正式发布并包含 arm64 DMG/App 资产。
 - GitHub CI `32905286208` 和 Release `32905638676` 成功，`v0.1.8` 正式发布并包含 arm64 DMG/App 资产。
+- GitHub CI `32906142197` 和 Release `32906448439` 成功，`v0.1.9` 正式发布并包含 arm64 DMG/App 资产。
