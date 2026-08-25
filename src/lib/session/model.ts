@@ -24,6 +24,8 @@ export interface SessionTab {
   encoding?: string;
   lineEnding?: '\n' | '\r\n' | '\r';
   readOnly: boolean;
+  previewDataUrl?: string;
+  previewMime?: string;
   manuallyNamed: boolean;
   createdAt: number;
   updatedAt: number;
@@ -72,6 +74,8 @@ export interface NewTabInput {
   encoding?: string;
   lineEnding?: SessionTab['lineEnding'];
   readOnly?: boolean;
+  previewDataUrl?: string;
+  previewMime?: string;
   now?: number;
   id?: string;
 }
@@ -104,6 +108,8 @@ export function createTab(input: NewTabInput = {}): SessionTab {
     encoding: input.encoding,
     lineEnding: input.lineEnding,
     readOnly: input.readOnly ?? kind === 'preview',
+    previewDataUrl: input.previewDataUrl,
+    previewMime: input.previewMime,
     manuallyNamed: input.title !== undefined,
     createdAt: now,
     updatedAt: now,

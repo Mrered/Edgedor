@@ -24,11 +24,23 @@ fn save_file(path: &str, content: &str) -> Result<(), String> {
 #[derive(Serialize)]
 struct OpenedFile { path: String, content: String, language: String }
 
+#[derive(Serialize)]
+struct PreviewFile { path: String, data_url: String, mime: String }
+
 #[tauri::command]
 fn open_text_file(path: &str) -> Result<OpenedFile, String> {
     let content = std::fs::read_to_string(path).map_err(|error| format!("不支持或无法读取此文件：{error}"))?;
     let language = std::path::Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or("plaintext").to_string();
     Ok(OpenedFile { path: path.to_string(), content, language })
+}
+
+#[tauri::command]
+fn preview_file(path: &str) -> Result<PreviewFile, String> {
+    let extension = std::path::Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or("").to_ascii_lowercase();
+    let mime = match extension.as_str() { "png" => "image/png", "jpg" | "jpeg" => "image/jpeg", "gif" => "image/gif", "webp" => "image/webp", "pdf" => "application/pdf", _ => return Err("此文件不支持预览".into()) };
+    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    let data_url = format!("data:{mime};base64,{}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes));
+    Ok(PreviewFile { path: path.to_string(), data_url, mime: mime.to_string() })
 }
 
 #[tauri::command]
@@ -77,7 +89,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, set_panel_pinned])
+        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, preview_file, set_panel_pinned])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {

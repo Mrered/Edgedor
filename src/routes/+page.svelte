@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { open, save } from '@tauri-apps/plugin-dialog';
   import EditorSurface from '../components/EditorSurface.svelte';
+  import PreviewSurface from '../components/PreviewSurface.svelte';
   import ToolbarMount from '../components/ToolbarMount.svelte';
   import { listenPanelStatus, panelAction, type PanelStatus } from '../lib/tauri/panel';
   import { addTab, closeTab, createSessionState, createTab, deserializeSession, expireTabs, focusTab, restoreLatest, serializeSession, updateTab, type SessionState, type SessionTab } from '../lib/session';
@@ -37,6 +38,13 @@
     try { const opened = await invoke<{ path: string; content: string; language: string }>('open_text_file', { path: selectedPath }); persist(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, title: selectedPath.split('/').at(-1) }))); }
     catch (error) { window.alert(String(error)); }
   }
+  async function openPreviewFile() {
+    const path = await open({ multiple: false, directory: false });
+    const selectedPath = Array.isArray(path) ? path[0] : path;
+    if (!selectedPath) return;
+    try { const preview = await invoke<{ path: string; data_url: string; mime: string }>('preview_file', { path: selectedPath }); persist(addTab(session, createTab({ kind: 'preview', filePath: preview.path, content: preview.data_url, language: 'preview', title: selectedPath.split('/').at(-1), readOnly: true, previewDataUrl: preview.data_url, previewMime: preview.mime }))); }
+    catch (error) { window.alert(String(error)); }
+  }
   async function openDroppedFile(event: DragEvent) {
     event.preventDefault();
     const file = event.dataTransfer?.files?.[0] as (File & { path?: string }) | undefined;
@@ -65,9 +73,9 @@
 </script>
 <svelte:head><title>Edgedor</title></svelte:head>
 <main class="shell">
-  <ToolbarMount /><div class="controls"><button onclick={openTextFile}>打开文本</button><select aria-label="编辑器快捷键方案" value={session.settings.shortcutProfile} onchange={setShortcutProfile}><option value="vscode">VS Code</option><option value="sublime">Sublime Text</option><option value="jetbrains">JetBrains</option><option value="vim">Vim</option></select><label><input type="checkbox" checked={session.settings.preserveOnRestart} onchange={setPreserveOnRestart} />重启保留</label><button class="pin" aria-pressed={pinned} onclick={togglePinned}>{pinned ? '取消固定' : '固定面板'}</button></div>
+  <ToolbarMount /><div class="controls"><button onclick={openTextFile}>打开文本</button><button onclick={openPreviewFile}>预览文件</button><select aria-label="编辑器快捷键方案" value={session.settings.shortcutProfile} onchange={setShortcutProfile}><option value="vscode">VS Code</option><option value="sublime">Sublime Text</option><option value="jetbrains">JetBrains</option><option value="vim">Vim</option></select><label><input type="checkbox" checked={session.settings.preserveOnRestart} onchange={setPreserveOnRestart} />重启保留</label><button class="pin" aria-pressed={pinned} onclick={togglePinned}>{pinned ? '取消固定' : '固定面板'}</button></div>
   <nav class="tabs" aria-label="编辑标签"><button class="add" onclick={newTab}>＋</button>{#each session.tabs as tab (tab.id)}<button class:active={tab.id === activeTab?.id} onclick={() => persist(focusTab(session, tab.id))}>{tab.title}</button>{/each}<button class="close" onclick={closeActive}>×</button><button class="restore" onclick={restoreClosed}>撤销关闭</button></nav>
-  <section class="workspace" aria-label="临时编辑区">{#if activeTab}{#key `${activeTab.id}:${session.settings.fontSize}`}<EditorSurface tab={activeTab} fontSize={session.settings.fontSize} onChange={editContent} />{/key}{:else}<button class="empty" onclick={newTab}>新建临时标签</button>{/if}</section>
+  <section class="workspace" aria-label="临时编辑区">{#if activeTab}{#if activeTab.kind === 'preview'}<PreviewSurface dataUrl={activeTab.previewDataUrl ?? activeTab.content} mime={activeTab.previewMime ?? 'application/octet-stream'} />{:else}{#key `${activeTab.id}:${session.settings.fontSize}`}<EditorSurface tab={activeTab} fontSize={session.settings.fontSize} onChange={editContent} />{/key}{/if}{:else}<button class="empty" onclick={newTab}>新建临时标签</button>{/if}</section>
   <footer aria-live="polite">{status.bridgeReady ? '原生面板已连接' : '正在连接原生面板…'} · {session.tabs.length} 个标签</footer>
 </main>
 <style>
