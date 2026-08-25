@@ -12,6 +12,7 @@ status: complete
 - Monaco 监听光标选择变化，保留多光标/矩阵选择视图状态；自定义快捷键解析覆盖常用功能键、数字、标点和方向键。
 - Vim 方案接入 `monaco-vim` 编辑区模式。
 - 原始 Tauri 宿主窗口默认隐藏，WKWebView 设置为随 NSPanel 尺寸变化自动填充。
+- 面板增加 180ms 滑入、换侧穿越和滑出动画；分区入口限制为当前已实现的两个编辑分区。
 
 ## 验证
 
@@ -21,3 +22,4 @@ status: complete
 - `cargo check --manifest-path src-tauri/Cargo.toml`
 - GitHub CI `32904051866` 成功。
 - GitHub Release `32904324672` 成功，`v0.1.7` 正式发布并包含 arm64 DMG/App 资产。
+- GitHub CI `32905286208` 和 Release `32905638676` 成功，`v0.1.8` 正式发布并包含 arm64 DMG/App 资产。
