@@ -19,9 +19,17 @@ pub mod edge_trigger;
 #[derive(Default)]
 pub struct NativePanel {
     panel: Mutex<Option<usize>>,
+    trigger: edge_trigger::EdgeTrigger,
 }
 
 impl NativePanel {
+    pub fn start_edge_trigger(&self, app: &AppHandle) -> Result<(), String> {
+        let app = app.clone();
+        self.trigger.start(edge_trigger::EdgeTriggerConfig::default(), move |_edge| {
+            if let Some(panel) = app.try_state::<NativePanel>() { let _ = panel.action("show"); }
+        })
+    }
+
     fn panel(&self) -> Option<&'static NSPanel> {
         let pointer = *self.panel.lock().ok()?.as_ref()?;
         // The retained object is released only when the process exits. All

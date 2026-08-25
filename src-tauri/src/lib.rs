@@ -66,6 +66,7 @@ pub fn run() {
                 let panel = app.state::<native_panel::NativePanel>();
                 native_panel::attach_from_setup(app.handle(), &panel)
                     .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+                let _ = panel.start_edge_trigger(app.handle());
             }
             let state = app.state::<PanelState>();
             if let Ok(mut status) = state.0.lock() {
