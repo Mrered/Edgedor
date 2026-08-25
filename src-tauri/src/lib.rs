@@ -36,6 +36,8 @@ struct PreviewFile { path: String, data_url: String, mime: String }
 
 #[tauri::command]
 fn open_text_file(path: &str) -> Result<OpenedFile, String> {
+    let size = std::fs::metadata(path).map_err(|error| format!("无法读取文件信息：{error}"))?.len();
+    if size > 20 * 1024 * 1024 { return Err("文本文件超过 20 MB 限制".into()); }
     let bytes = std::fs::read(path).map_err(|error| format!("不支持或无法读取此文件：{error}"))?;
     let (encoding, content) = if bytes.starts_with(&[0xFF, 0xFE]) { ("utf-16le", encoding_rs::UTF_16LE.decode(&bytes[2..]).0.into_owned()) } else if bytes.starts_with(&[0xFE, 0xFF]) { ("utf-16be", encoding_rs::UTF_16BE.decode(&bytes[2..]).0.into_owned()) } else if let Ok(content) = std::str::from_utf8(&bytes) { ("utf-8", content.to_string()) } else { ("gb18030", encoding_rs::GB18030.decode(&bytes).0.into_owned()) };
     let language = std::path::Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or("plaintext").to_string();
