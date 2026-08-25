@@ -62,6 +62,9 @@
       if ((event.metaKey || event.ctrlKey) && (event.key === '+' || event.key === '=')) { event.preventDefault(); changeFontSize(1); }
       if ((event.metaKey || event.ctrlKey) && event.key === '-') { event.preventDefault(); changeFontSize(-1); }
       if ((event.metaKey || event.ctrlKey) && event.key === '0') { event.preventDefault(); persist({ ...session, settings: { ...session.settings, fontSize: 14 } }); }
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 'n') { event.preventDefault(); newTab(); }
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 'w') { event.preventDefault(); closeActive(); }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 't') { event.preventDefault(); restoreClosed(); }
     };
     window.addEventListener('keydown', onKeyDown);
     const onDragOver = (event: DragEvent) => event.preventDefault();
