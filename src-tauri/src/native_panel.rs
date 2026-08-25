@@ -20,6 +20,7 @@ pub mod edge_trigger;
 pub struct NativePanel {
     panel: Mutex<Option<usize>>,
     trigger: edge_trigger::EdgeTrigger,
+    pinned: Mutex<bool>,
 }
 
 impl NativePanel {
@@ -53,7 +54,7 @@ impl NativePanel {
             )
         };
         panel.setFloatingPanel(true);
-        panel.setHidesOnDeactivate(false);
+        panel.setHidesOnDeactivate(!*self.pinned.lock().map_err(|_| "native panel state unavailable")?);
         panel.setLevel(NSFloatingWindowLevel);
         let pointer = RetainedPanel::leak(panel);
         *self.panel.lock().map_err(|_| "native panel state unavailable")? = Some(pointer);
@@ -96,6 +97,12 @@ impl NativePanel {
             }
             _ => Err("unsupported panel action".into()),
         }
+    }
+
+    pub fn set_pinned(&self, pinned: bool) -> Result<(), String> {
+        *self.pinned.lock().map_err(|_| "native panel state unavailable")? = pinned;
+        if let Some(panel) = self.panel() { panel.setHidesOnDeactivate(!pinned); }
+        Ok(())
     }
 }
 
