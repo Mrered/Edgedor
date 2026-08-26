@@ -121,6 +121,11 @@ const nonActiveRemoval = focusTab(activeRemoval, 'left-tab', start + 2);
 const preservedActive = removeGroup(nonActiveRemoval, 'group-2');
 assert(preservedActive.activeGroupId === 'group-1', 'removing inactive group preserves active group');
 assert(preservedActive.groups.find((group) => group.id === 'group-1')?.activeTabId === 'left-tab', 'removing inactive group preserves active tab');
+const removedLast = removeGroup(focusTab(activeRemoval, 'right-tab', start + 3), 'group-3');
+assert(removedLast.activeGroupId === 'group-2', 'active last group transfers activity to its left visual neighbor');
+assert(removedLast.groups.find((group) => group.id === 'group-2')?.activeTabId === 'right-tab', 'last-group active tab remains active in left receiver');
+assert(removedLast.tabs.find((candidate) => candidate.id === 'right-tab')?.groupId === 'group-2', 'last-group tabs move to left receiver');
+assertRatios(removedLast, 'last group removal');
 
 const legacyTabA = createTab({ id: 'legacy-a', groupId: 'group-1', now: start });
 const legacyTabB = createTab({ id: 'legacy-b', groupId: 'group-2', now: start });
