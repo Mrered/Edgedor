@@ -15,7 +15,7 @@
   import { DEFAULT_SESSION_SETTINGS, MAX_EDITOR_GROUPS, MIN_GROUP_RATIO, addTab, applySaveResult, captureSaveRequest, clearSessionCheckpoint, closeTab, createGroup, createSessionState, createTab, expireTabs, focusTab, moveTabToGroup, persistSessionSettings, readStartupState, removeGroup, resizeAdjacentGroups, restoreLatest, touchTab, updateTab, writeSessionCheckpoint, type EditorGroup, type EditorSnapshot, type SessionSettings, type SessionState, type SessionTab } from '../lib/session';
   import { validateShortcut, type EditorCommand } from '../lib/shortcuts';
   import { editorModelRegistry } from '../lib/editor/monaco';
-  let status: PanelStatus = { visible: true, focused: true, bridgeReady: false };
+  let status: PanelStatus = { visible: false, focused: false, bridgeReady: false };
   let pinned = false;
   let session: SessionState = createSessionState();
   let activeTab: SessionTab | undefined;
@@ -563,8 +563,8 @@
     };
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('paste', openPastedFiles);
-    const onWindowBlur = () => { cleanupTabDrag(); if (status.visible) void panelAction(pinned ? 'lower' : 'hide'); };
-    const onWindowFocus = () => { if (status.visible) void panelAction('focus'); };
+    const onWindowBlur = () => { cleanupTabDrag(); if (panelStatusInitialized && status.visible) void panelAction(pinned ? 'lower' : 'hide'); };
+    const onWindowFocus = () => { if (panelStatusInitialized && status.visible) void panelAction('focus'); };
     window.addEventListener('blur', onWindowBlur);
     window.addEventListener('focus', onWindowFocus);
     void getCurrentWebview().onDragDropEvent(async (event) => {

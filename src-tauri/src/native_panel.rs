@@ -484,8 +484,7 @@ impl NativePanel {
             }
             "focus" => {
                 self.animation_generation.fetch_add(1, Ordering::Relaxed);
-                converge_latest_target(panel, &self.animation_target, &self.current_edge);
-                Ok((true, true))
+                Ok(converge_latest_target(panel, &self.animation_target, &self.current_edge))
             }
             "hide" => {
                 capture_width_ratio(panel, &self.width_ratio);
@@ -698,8 +697,9 @@ fn converge_latest_target(
     panel: &NSPanel,
     animation_target: &Arc<Mutex<AnimationTarget>>,
     current_edge: &Arc<Mutex<Option<edge_trigger::Edge>>>,
-) {
+) -> (bool, bool) {
     let target = animation_target.lock().map(|target| *target).unwrap_or(AnimationTarget::Hidden { frame: None });
+    let focus_result = focus_result_for_target(&target);
     match target {
         AnimationTarget::Hidden { frame } => {
             if let Some(frame) = frame.filter(|frame| frame.is_valid()) {
@@ -710,6 +710,7 @@ fn converge_latest_target(
             if let Ok(mut current_edge) = current_edge.lock() {
                 *current_edge = None;
             }
+            focus_result
         }
         AnimationTarget::Visible { frame, edge } if frame.is_valid() => {
             panel.setFrame_display(frame.rect(), true);
@@ -719,6 +720,7 @@ fn converge_latest_target(
             if let Ok(mut current_edge) = current_edge.lock() {
                 *current_edge = edge;
             }
+            focus_result
         }
         AnimationTarget::Visible { .. } => {
             panel.orderOut(None::<&AnyObject>);
@@ -726,7 +728,15 @@ fn converge_latest_target(
             if let Ok(mut current_edge) = current_edge.lock() {
                 *current_edge = None;
             }
+            (false, false)
         }
+    }
+}
+
+fn focus_result_for_target(target: &AnimationTarget) -> (bool, bool) {
+    match target {
+        AnimationTarget::Hidden { .. } => (false, false),
+        AnimationTarget::Visible { .. } => (true, true),
     }
 }
 
@@ -835,8 +845,10 @@ mod tests {
 
     #[test]
     fn latest_hidden_target_wins_a_rapid_hide_then_focus() {
-        let mut latest = AnimationTarget::Visible { frame: FRAME, edge: None };
-        latest = AnimationTarget::Hidden { frame: Some(FRAME) };
-        assert_eq!(focus_result_for_target(&latest), (false, false));
+        let targets = [
+            AnimationTarget::Visible { frame: FRAME, edge: None },
+            AnimationTarget::Hidden { frame: Some(FRAME) },
+        ];
+        assert_eq!(focus_result_for_target(targets.last().expect("latest target")), (false, false));
     }
 }
