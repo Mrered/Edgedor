@@ -236,6 +236,24 @@ fn set_edge_modifier(modifier: &str, app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn set_edge_trigger_options(left_enabled: bool, right_enabled: bool, dwell_ms: u64, app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { app.state::<native_panel::NativePanel>().set_edge_trigger_options(left_enabled, right_enabled, dwell_ms, &app)?; }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (left_enabled, right_enabled, dwell_ms, app);
+    Ok(())
+}
+
+#[tauri::command]
+fn set_panel_animation(enabled: bool, duration_ms: u64, app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { app.state::<native_panel::NativePanel>().set_panel_animation(enabled, duration_ms)?; }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (enabled, duration_ms, app);
+    Ok(())
+}
+
+#[tauri::command]
 fn panel_action(action: &str, app: AppHandle, state: State<'_, PanelState>) -> Result<PanelStatus, String> {
     if !matches!(action, "show" | "focus" | "hide") {
         return Err("unsupported panel action".into());
@@ -276,7 +294,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, preview_file, set_panel_pinned, quit_app, startup_paths, set_menu_bar_icon_visible, set_dock_icon_visible, set_edge_modifier])
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, preview_file, set_panel_pinned, quit_app, startup_paths, set_menu_bar_icon_visible, set_dock_icon_visible, set_edge_modifier, set_edge_trigger_options, set_panel_animation])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {

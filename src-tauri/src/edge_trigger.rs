@@ -26,6 +26,9 @@ pub struct EdgeTriggerConfig {
     pub hold_duration: Duration,
     /// Hit-zone width in AppKit points.
     pub edge_tolerance: f64,
+    /// Whether the corresponding screen edge can fire the trigger.
+    pub left_enabled: bool,
+    pub right_enabled: bool,
 }
 
 impl Default for EdgeTriggerConfig {
@@ -34,6 +37,8 @@ impl Default for EdgeTriggerConfig {
             modifier: NSEventModifierFlags::Command,
             hold_duration: Duration::from_millis(150),
             edge_tolerance: 3.0,
+            left_enabled: true,
+            right_enabled: true,
         }
     }
 }
@@ -98,7 +103,10 @@ impl EdgeTrigger {
             let modifier_down = normalized_flags == config.modifier;
             let mouse_location = NSEvent::mouseLocation();
             let edge = if modifier_down {
-                edge_at(mouse_location, config.edge_tolerance, marker)
+                edge_at(mouse_location, config.edge_tolerance, marker).filter(|edge| match edge {
+                    Edge::Left => config.left_enabled,
+                    Edge::Right => config.right_enabled,
+                })
             } else {
                 None
             };

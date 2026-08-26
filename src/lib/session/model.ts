@@ -62,6 +62,11 @@ export interface SessionSettings {
   showMenuBarIcon: boolean;
   showDockIcon: boolean;
   edgeModifier: 'command' | 'option' | 'control' | 'shift';
+  leftEdgeEnabled: boolean;
+  rightEdgeEnabled: boolean;
+  edgeDwellMs: number;
+  panelAnimationEnabled: boolean;
+  panelAnimationDurationMs: number;
   tabLayout: 'top' | 'left' | 'right';
   topTabBehavior: 'scroll' | 'compress';
   showBreadcrumbs: boolean;
@@ -91,6 +96,11 @@ export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
   showMenuBarIcon: true,
   showDockIcon: false,
   edgeModifier: 'command',
+  leftEdgeEnabled: true,
+  rightEdgeEnabled: true,
+  edgeDwellMs: 150,
+  panelAnimationEnabled: true,
+  panelAnimationDurationMs: 180,
   tabLayout: 'top',
   topTabBehavior: 'scroll',
   showBreadcrumbs: true,
@@ -346,6 +356,11 @@ function normalizeSettings(input: Partial<SessionSettings>): SessionSettings {
     showMenuBarIcon: input.showMenuBarIcon ?? DEFAULT_SESSION_SETTINGS.showMenuBarIcon,
     showDockIcon: input.showDockIcon ?? DEFAULT_SESSION_SETTINGS.showDockIcon,
     edgeModifier: input.edgeModifier ?? DEFAULT_SESSION_SETTINGS.edgeModifier,
+    leftEdgeEnabled: input.leftEdgeEnabled ?? DEFAULT_SESSION_SETTINGS.leftEdgeEnabled,
+    rightEdgeEnabled: input.rightEdgeEnabled ?? DEFAULT_SESSION_SETTINGS.rightEdgeEnabled,
+    edgeDwellMs: Math.max(50, Math.min(2000, input.edgeDwellMs ?? DEFAULT_SESSION_SETTINGS.edgeDwellMs)),
+    panelAnimationEnabled: input.panelAnimationEnabled ?? DEFAULT_SESSION_SETTINGS.panelAnimationEnabled,
+    panelAnimationDurationMs: Math.max(50, Math.min(1000, input.panelAnimationDurationMs ?? DEFAULT_SESSION_SETTINGS.panelAnimationDurationMs)),
     tabLayout: input.tabLayout ?? DEFAULT_SESSION_SETTINGS.tabLayout,
     topTabBehavior: input.topTabBehavior ?? DEFAULT_SESSION_SETTINGS.topTabBehavior,
     showBreadcrumbs: input.showBreadcrumbs ?? DEFAULT_SESSION_SETTINGS.showBreadcrumbs,
