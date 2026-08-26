@@ -25,6 +25,7 @@ import {
   SETTINGS_KEY,
   clearSessionCheckpoint,
   persistSessionSettings,
+  readStartupState,
   writeSessionCheckpoint,
   type SessionStorage
 } from './storage.ts';
@@ -41,9 +42,10 @@ const assertRatios = (state: ReturnType<typeof createSessionState>, message: str
 
 class MemoryStorage implements SessionStorage {
   readonly values = new Map<string, string>();
-  readonly operations: Array<{ type: 'set' | 'remove'; key: string; value?: string }> = [];
+  readonly operations: Array<{ type: 'get' | 'set' | 'remove'; key: string; value?: string }> = [];
 
   getItem(key: string): string | null {
+    this.operations.push({ type: 'get', key });
     return this.values.get(key) ?? null;
   }
 
@@ -186,6 +188,80 @@ assert(restored?.tabs.length === state.tabs.length, 'round-trips serialized stat
 assert(restored?.undoSlots.length === 0, 'does not restore undo slots across restart');
 const settingsRoundTrip = deserializeSettings(serializeSettings(createSessionState().settings));
 assert(settingsRoundTrip?.preserveOnRestart === true && settingsRoundTrip?.shortcutProfile === 'vscode', 'round-trips settings independently');
+const hostileSettings = deserializeSettings(JSON.stringify({
+  preserveOnRestart: 'false',
+  launchAtLogin: 1,
+  shortcutProfile: 'emacs',
+  shortcutOverrides: { deleteLine: 'Cmd+Shift+K', toggleComment: 'D', unknownCommand: 'Cmd+U' },
+  fontSize: 999,
+  showLineNumbers: 'true',
+  showMinimap: false,
+  showFolding: null,
+  showGlyphMargin: true,
+  showTabs: 0,
+  showMenuBarIcon: false,
+  showDockIcon: 'yes',
+  edgeModifier: 'fn',
+  leftEdgeEnabled: false,
+  rightEdgeEnabled: 'false',
+  edgeDwellMs: 9_999,
+  panelAnimationEnabled: 1,
+  panelAnimationDurationMs: -1,
+  tabLayout: 'bottom',
+  topTabBehavior: 'wrap',
+  showBreadcrumbs: false,
+  showStatusBar: 'false',
+  pinned: true
+}));
+assert(hostileSettings?.preserveOnRestart === true && hostileSettings.launchAtLogin === false, 'rejects non-boolean settings');
+assert(hostileSettings?.shortcutProfile === 'vscode' && hostileSettings.edgeModifier === 'command', 'rejects invalid setting enums');
+assert(hostileSettings?.tabLayout === 'top' && hostileSettings.topTabBehavior === 'scroll', 'repairs invalid tab enums');
+assert(hostileSettings?.fontSize === 32 && hostileSettings.edgeDwellMs === 2_000 && hostileSettings.panelAnimationDurationMs === 50, 'clamps finite numeric settings');
+assert(hostileSettings?.showMinimap === false && hostileSettings.showGlyphMargin === true && hostileSettings.leftEdgeEnabled === false, 'preserves valid booleans');
+assert(hostileSettings?.shortcutOverrides.deleteLine === 'Cmd+Shift+K' && Object.keys(hostileSettings.shortcutOverrides).length === 1, 'filters shortcut overrides by command and binding');
+assert(Object.getPrototypeOf(hostileSettings?.shortcutOverrides) === Object.prototype, 'rebuilds shortcut overrides as a plain object');
+assert(deserializeSettings('[]') === undefined && deserializeSettings('{') === undefined, 'rejects array and truncated settings JSON');
+
+const validRecoveredTab = {
+  ...createTab({ id: 'valid-recovered', content: 'safe', now: start }),
+  languageManuallySelected: true,
+  encoding: 'utf-16le',
+  lineEnding: '\r\n',
+  editor: { scrollTop: 12, scrollLeft: 3, selections: { cursor: 1 }, viewState: { top: 2 }, ignored: true },
+  unexpected: 'discard me'
+};
+const partiallyCorrupt = deserializeSession(JSON.stringify({
+  ...createSessionState(start),
+  tabs: [
+    validRecoveredTab,
+    { ...createTab({ id: 'valid-recovered', now: start }), content: 'duplicate' },
+    { ...createTab({ id: 'missing-time', now: start }), updatedAt: 'now' },
+    { ...createTab({ id: 'bad-kind', now: start }), kind: 'remote' },
+    { ...createTab({ id: 'missing-file', kind: 'file', now: start }), filePath: '' },
+    { ...createTab({ id: 'missing-preview', kind: 'preview', now: start }), filePath: undefined },
+    { ...createTab({ id: 'invalid-editor', now: start }), editor: [], dirty: 'yes', languageManuallySelected: 1 }
+  ],
+  groups: [
+    { id: 'group-1', splitRatio: 0.75, tabIds: ['valid-recovered', 'missing-time'], activeTabId: 'missing-time' },
+    { id: 'group-1', splitRatio: Number.POSITIVE_INFINITY, tabIds: ['invalid-editor'], activeTabId: 'invalid-editor' },
+    null
+  ],
+  activeGroupId: 'missing',
+  splitOrientation: 'diagonal'
+}));
+assert(partiallyCorrupt?.tabs.map((candidate) => candidate.id).join(',') === 'valid-recovered,invalid-editor', 'drops unrecoverable and duplicate tabs while preserving valid tabs');
+const recoveredValid = partiallyCorrupt?.tabs.find((candidate) => candidate.id === 'valid-recovered');
+assert(recoveredValid?.encoding === 'utf-16le' && recoveredValid.lineEnding === '\r\n' && recoveredValid.languageManuallySelected === true, 'preserves validated optional tab metadata');
+assert(!('unexpected' in (recoveredValid ?? {})) && !('ignored' in (recoveredValid?.editor ?? {})), 'rebuilds tabs and editor snapshots without unknown fields');
+const recoveredInvalidEditor = partiallyCorrupt?.tabs.find((candidate) => candidate.id === 'invalid-editor');
+assert(Object.keys(recoveredInvalidEditor?.editor ?? {}).length === 0 && recoveredInvalidEditor?.dirty === undefined && recoveredInvalidEditor?.languageManuallySelected === undefined, 'clears invalid optional tab and editor fields');
+assert(partiallyCorrupt?.groups.length === 2 && new Set(partiallyCorrupt.groups.map((group) => group.id)).size === 2, 'repairs duplicate group ids and removes invalid groups');
+assert(partiallyCorrupt?.groups.flatMap((group) => group.tabIds).join(',') === 'valid-recovered,invalid-editor', 'repairs group membership from validated tabs');
+assert(partiallyCorrupt?.activeGroupId === partiallyCorrupt?.groups[0]?.id && partiallyCorrupt?.splitOrientation === 'vertical', 'repairs invalid active group and orientation');
+assert(deserializeSession('') === undefined && deserializeSession('{}') === undefined && deserializeSession('[]') === undefined, 'rejects empty, malformed, and non-object session roots');
+assert(deserializeSession(JSON.stringify({ ...createSessionState(start), version: 2 })) === undefined, 'rejects unknown session versions');
+assert(deserializeSession(JSON.stringify({ ...createSessionState(start), tabs: [] })) === undefined, 'rejects snapshots without recoverable tabs');
+assert(deserializeSession(JSON.stringify({ ...createSessionState(start), tabs: [null, { id: '' }] })) === undefined, 'rejects snapshots whose tabs are entirely corrupt');
 const expiredAtStartup = expireTabs(addTab(createSessionState(start), createTab({ id: 'old', now: start })), start + TAB_EXPIRY_MS);
 assert(expiredAtStartup.expired.length === 1 && expiredAtStartup.state.undoSlots[0]?.tab.id === 'old', 'expires temporary tabs during startup recovery');
 let batchExpiry = createSessionState(start);
@@ -221,4 +297,27 @@ assert(!disabledCheckpointOperations.some((operation) => operation.type === 'set
 storage.setItem(SESSION_KEY, 'stale');
 clearSessionCheckpoint(storage);
 assert(storage.operations.at(-1)?.type === 'remove' && storage.operations.at(-1)?.key === SESSION_KEY, 'explicit clear removes snapshot');
+
+const disabledStartup = new MemoryStorage();
+disabledStartup.values.set(SETTINGS_KEY, serializeSettings({ ...createSessionState(start).settings, preserveOnRestart: false }));
+disabledStartup.values.set(SESSION_KEY, serializeSession(addTab(createSessionState(start), createTab({ id: 'must-not-read', now: start }))));
+const disabledStartupState = readStartupState(disabledStartup);
+assert(disabledStartupState.session === undefined && disabledStartupState.settings.preserveOnRestart === false, 'disabled startup never adopts a prior session');
+assert(disabledStartup.operations.some((operation) => operation.type === 'remove' && operation.key === SESSION_KEY), 'disabled startup clears the session checkpoint');
+assert(!disabledStartup.operations.some((operation) => operation.type === 'get' && operation.key === SESSION_KEY), 'disabled startup never reads the session checkpoint');
+
+const corruptStartup = new MemoryStorage();
+corruptStartup.values.set(SETTINGS_KEY, serializeSettings(createSessionState(start).settings));
+corruptStartup.values.set(SESSION_KEY, '{broken');
+const corruptStartupState = readStartupState(corruptStartup);
+assert(corruptStartupState.session === undefined, 'corrupt startup snapshot is not adopted');
+assert(corruptStartup.operations.at(-1)?.type === 'remove' && corruptStartup.operations.at(-1)?.key === SESSION_KEY, 'corrupt startup snapshot is cleared');
+
+const migratedStartup = new MemoryStorage();
+const migratedSession = addTab(createSessionState(start), createTab({ id: 'legacy-session', now: start }));
+migratedSession.settings = { ...migratedSession.settings, preserveOnRestart: false, fontSize: 22 };
+migratedStartup.values.set(SESSION_KEY, serializeSession(migratedSession));
+const migratedStartupState = readStartupState(migratedStartup);
+assert(migratedStartupState.session?.tabs[0]?.id === 'legacy-session', 'missing independent settings may migrate a valid legacy session');
+assert(migratedStartupState.settings.fontSize === 22 && migratedStartupState.settings.preserveOnRestart === true, 'legacy settings migration adopts settings but defaults recovery to enabled');
 console.log('Edgedor session self-check passed');
