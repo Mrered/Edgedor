@@ -63,7 +63,7 @@ impl EdgeTrigger {
     /// re-armed only after leaving the edge or releasing the modifier.
     pub fn start<F>(&self, config: EdgeTriggerConfig, callback: F) -> Result<(), String>
     where
-        F: Fn(Edge) + Send + Sync + 'static,
+        F: Fn(Edge, (f64, f64)) + Send + Sync + 'static,
     {
         if config.modifier.is_empty() {
             return Err("edge trigger modifier cannot be empty".to_string());
@@ -78,7 +78,7 @@ impl EdgeTrigger {
         }
 
         let state = Arc::new(Mutex::new(TriggerState::default()));
-        let callback: Arc<dyn Fn(Edge) + Send + Sync> = Arc::new(callback);
+        let callback: Arc<dyn Fn(Edge, (f64, f64)) + Send + Sync> = Arc::new(callback);
         let block_state = Arc::clone(&state);
         let block_callback = Arc::clone(&callback);
         let block = RcBlock::new(move |_timer: std::ptr::NonNull<NSTimer>| {
@@ -87,9 +87,14 @@ impl EdgeTrigger {
                 None => return,
             };
             let flags = NSEvent::modifierFlags_class();
-            let modifier_down = flags.contains(config.modifier);
+            // Caps Lock is a persistent toggle, not an intentional edge
+            // modifier. All other modifier bits must match exactly so that
+            // e.g. Command+Shift does not trigger a Command-only binding.
+            let normalized_flags = flags & !NSEventModifierFlags::CapsLock;
+            let modifier_down = normalized_flags == config.modifier;
+            let mouse_location = NSEvent::mouseLocation();
             let edge = if modifier_down {
-                edge_at(NSEvent::mouseLocation(), config.edge_tolerance, marker)
+                edge_at(mouse_location, config.edge_tolerance, marker)
             } else {
                 None
             };
@@ -115,7 +120,7 @@ impl EdgeTrigger {
                     .is_some_and(|since| since.elapsed() >= config.hold_duration)
             {
                 state.fired = true;
-                block_callback(edge);
+                block_callback(edge, (mouse_location.x, mouse_location.y));
             }
         });
 

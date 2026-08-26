@@ -94,9 +94,9 @@ impl NativePanel {
     pub fn start_edge_trigger(&self, app: &AppHandle) -> Result<(), String> {
         let app = app.clone();
         let modifier = *self.edge_modifier.lock().map_err(|_| "edge modifier state unavailable")?;
-        self.trigger.start(edge_trigger::EdgeTriggerConfig { modifier, ..Default::default() }, move |_edge| {
+        self.trigger.start(edge_trigger::EdgeTriggerConfig { modifier, ..Default::default() }, move |_edge, point| {
             if let Some(panel) = app.try_state::<NativePanel>() {
-                if let Err(error) = panel.show_at_edge(_edge) {
+                if let Err(error) = panel.show_at_edge_at(_edge, point) {
                     eprintln!("Edgedor edge panel show failed: {error}");
                 }
             }
@@ -120,13 +120,21 @@ impl NativePanel {
     }
 
     pub fn show_at_edge(&self, edge: edge_trigger::Edge) -> Result<(), String> {
+        let point = NSEvent::mouseLocation();
+        self.show_at_edge_at(edge, (point.x, point.y))
+    }
+
+    fn show_at_edge_at(&self, edge: edge_trigger::Edge, point: (f64, f64)) -> Result<(), String> {
         eprintln!("Edgedor edge trigger fired: {edge:?}");
         let panel = self.create()?;
         let marker = MainThreadMarker::new().ok_or("NSPanel must be shown on the main thread")?;
         let application = NSApplication::sharedApplication(marker);
         #[allow(deprecated)]
         application.activateIgnoringOtherApps(true);
-        let screen = screen_at(NSEvent::mouseLocation(), marker)
+        // Use the pointer captured at trigger time; do not let a subsequent
+        // cross-screen pointer move change the destination during animation.
+        let trigger_point = NSPoint::new(point.0, point.1);
+        let screen = screen_at(trigger_point, marker)
             .or_else(|| NSScreen::mainScreen(marker))
             .ok_or("no screen available")?;
         let frame = screen.visibleFrame();
