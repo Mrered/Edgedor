@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: planning
 stopped_at: Phase 3 core interaction slice compiled; runtime permission and file preview remain
-last_updated: "2026-08-27T04:18:00.000+08:00"
-last_activity: 2026-08-27 — 完成 Monaco 标签模型与撤销历史持久化
+last_updated: "2026-08-27T04:38:00.000+08:00"
+last_activity: 2026-08-27 — 完成最终生命周期失败语义与面板状态同步
 progress:
   total_phases: 6
   completed_phases: 0
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 Phase: 3 of 6 (编辑器交互与会话)
 Plan: 1 of 1 in current phase
 Status: In progress
-Last activity: 2026-08-27 — 完成 quick task 260827-59g：Monaco 标签模型与撤销历史持久化
+Last activity: 2026-08-27 — 完成 quick task 260827-5ze：最终生命周期与面板状态修复
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -80,6 +80,7 @@ None yet.
 | 260827-3vs | 修复原生面板状态与退出可靠性缺陷 | 2026-08-27 | 110061a | Needs Review | [260827-3vs-native-hardening](./quick/260827-3vs-native-hardening/) |
 | 260827-4ki | 修复文件拖放、会话恢复与保存绑定安全缺陷 | 2026-08-27 | 6adcb3f | Needs Review | [260827-4ki-data-safety](./quick/260827-4ki-data-safety/) |
 | 260827-59g | 持久化每个标签的 Monaco 模型与撤销历史 | 2026-08-27 | bb082e3 | Needs Review | [260827-59g-monaco](./quick/260827-59g-monaco/) |
+| 260827-5ze | 修复快照失败退出确认与隐藏焦点状态 | 2026-08-27 | 61b8204 | Needs Review | [260827-5ze-final-lifecycle-fixes](./quick/260827-5ze-final-lifecycle-fixes/) |
 
 ## Deferred Items
 
