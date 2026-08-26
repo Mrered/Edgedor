@@ -34,13 +34,15 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ inputs.tag || github.ref_name }}
           releaseName: Edgedor ${{ inputs.tag || github.ref_name }}
           releaseBody: |
             Edgedor 的 macOS arm64 构建，目标系统为 macOS 26 Tahoe 及以上版本。
 
-            安装前请阅读仓库 README 中的权限和限制说明。当前构建未启用 Tauri Updater 自动更新。
+            安装前请阅读仓库 README 中的权限和限制说明。Release 同时包含 Tauri Updater 的签名更新包与 latest.json。
           releaseDraft: false
           prerelease: false
           args: --target aarch64-apple-darwin --bundles app,dmg

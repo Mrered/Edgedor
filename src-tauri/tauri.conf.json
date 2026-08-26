@@ -24,6 +24,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "fileAssociations": [
       {
         "ext": ["txt", "md", "markdown", "json", "js", "jsx", "ts", "tsx", "rs", "py", "go", "java", "c", "h", "cpp", "css", "html", "xml", "yaml", "yml", "toml", "sh"],

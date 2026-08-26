@@ -4,6 +4,8 @@
   import { listen } from '@tauri-apps/api/event';
   import { open, save } from '@tauri-apps/plugin-dialog';
   import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
+  import { check } from '@tauri-apps/plugin-updater';
+  import { relaunch } from '@tauri-apps/plugin-process';
   import EditorSurface from '../components/EditorSurface.svelte';
   import PreviewSurface from '../components/PreviewSurface.svelte';
   import ToolbarMount from '../components/ToolbarMount.svelte';
@@ -118,6 +120,30 @@
   function setLanguage(tabId: string, event: Event) {
     const language = (event.currentTarget as HTMLSelectElement).value;
     persist(updateTab(session, tabId, { language }));
+  }
+  async function setEdgeOptions() {
+    try { await invoke('set_edge_trigger_options', { leftEnabled: session.settings.leftEdgeEnabled, rightEnabled: session.settings.rightEdgeEnabled, dwellMs: session.settings.edgeDwellMs }); }
+    catch (error) { showNotice(String(error)); }
+  }
+  function updateEdgeOption(key: 'leftEdgeEnabled' | 'rightEdgeEnabled' | 'edgeDwellMs', value: boolean | number) {
+    const settings = { ...session.settings, [key]: value };
+    persist({ ...session, settings });
+    void setEdgeOptions();
+  }
+  async function setAnimationOption(key: 'panelAnimationEnabled' | 'panelAnimationDurationMs', value: boolean | number) {
+    const settings = { ...session.settings, [key]: value };
+    persist({ ...session, settings });
+    try { await invoke('set_panel_animation', { enabled: settings.panelAnimationEnabled, durationMs: settings.panelAnimationDurationMs }); }
+    catch (error) { showNotice(String(error)); }
+  }
+  async function checkForUpdates() {
+    try {
+      const update = await check();
+      if (!update) { showNotice(t('noUpdates')); return; }
+      if (!window.confirm(t('updateFound', { version: update.version }))) return;
+      await update.downloadAndInstall();
+      await relaunch();
+    } catch (error) { showNotice(`${t('updateFailed')}${String(error)}`); }
   }
   function changeFontSize(delta: number) { persist({ ...session, settings: { ...session.settings, fontSize: Math.max(10, Math.min(32, session.settings.fontSize + delta)) } }); }
   function setEditorVisibility(key: 'showLineNumbers' | 'showMinimap' | 'showFolding' | 'showGlyphMargin', event: Event) {
@@ -318,6 +344,8 @@
     void invoke('set_dock_icon_visible', { visible: session.settings.showDockIcon });
     void invoke('set_panel_pinned', { pinned });
     void invoke('set_edge_modifier', { modifier: session.settings.edgeModifier });
+    void setEdgeOptions();
+    void invoke('set_panel_animation', { enabled: session.settings.panelAnimationEnabled, durationMs: session.settings.panelAnimationDurationMs });
     expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) { persist(result.state); showNotice(t('tabsExpired', { count: result.expired.length })); } }, 60_000);
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && showSearch) { event.preventDefault(); closeSearch(); return; }
@@ -406,6 +434,11 @@
         <div class="settings-heading"><h2>{t('settings')}</h2><button bind:this={settingsCloseButton} aria-label={t('closeSettings')} onclick={closeSettings}>×</button></div>
         <label>{t('shortcutProfile')}<select aria-label={t('shortcutProfile')} value={session.settings.shortcutProfile} onchange={setShortcutProfile}><option value="vscode">VS Code</option><option value="sublime">Sublime Text</option><option value="jetbrains">JetBrains</option><option value="vim">{t('vimEditor')}</option></select></label>
         <label>{t('edgeModifier')}<select aria-label={t('edgeModifier')} value={session.settings.edgeModifier} onchange={setEdgeModifier}><option value="command">{t('commandKey')}</option><option value="option">{t('optionKey')}</option><option value="control">{t('controlKey')}</option><option value="shift">{t('shiftKey')}</option></select></label>
+        <label class="checkbox"><input type="checkbox" checked={session.settings.leftEdgeEnabled} onchange={(event) => updateEdgeOption('leftEdgeEnabled', (event.currentTarget as HTMLInputElement).checked)} />{t('leftEdge')}</label>
+        <label class="checkbox"><input type="checkbox" checked={session.settings.rightEdgeEnabled} onchange={(event) => updateEdgeOption('rightEdgeEnabled', (event.currentTarget as HTMLInputElement).checked)} />{t('rightEdge')}</label>
+        <label>{t('edgeDwell')}<input type="number" min="50" max="2000" step="10" value={session.settings.edgeDwellMs} onchange={(event) => updateEdgeOption('edgeDwellMs', Math.max(50, Math.min(2000, Number((event.currentTarget as HTMLInputElement).value) || 150)))} /></label>
+        <label class="checkbox"><input type="checkbox" checked={session.settings.panelAnimationEnabled} onchange={(event) => void setAnimationOption('panelAnimationEnabled', (event.currentTarget as HTMLInputElement).checked)} />{t('panelAnimation')}</label>
+        <label>{t('animationDuration')}<input type="number" min="50" max="1000" step="10" value={session.settings.panelAnimationDurationMs} onchange={(event) => void setAnimationOption('panelAnimationDurationMs', Math.max(50, Math.min(1000, Number((event.currentTarget as HTMLInputElement).value) || 180)))} /></label>
         <label>{t('tabLayout')}<select aria-label={t('tabLayout')} value={session.settings.tabLayout} onchange={setTabLayout}><option value="top">{t('tabTop')}</option><option value="left">{t('tabLeft')}</option><option value="right">{t('tabRight')}</option></select></label>
         {#if session.settings.tabLayout === 'top'}<label>{t('topTabBehavior')}<select aria-label={t('topTabBehavior')} value={session.settings.topTabBehavior} onchange={setTopTabBehavior}><option value="scroll">{t('tabScroll')}</option><option value="compress">{t('tabCompress')}</option></select></label>{/if}
         {#if session.groups.length === 2}<label>{t('splitRatio')} <input aria-label={t('splitRatio')} type="range" min="0.2" max="0.8" step="0.05" value={splitRatio()} oninput={setSplitRatio} /></label>{/if}
@@ -423,6 +456,7 @@
         <label class="checkbox"><input type="checkbox" checked={session.settings.showMenuBarIcon} onchange={setMenuBarIcon} />{t('showMenuBar')}</label>
         <label class="checkbox"><input type="checkbox" checked={session.settings.showDockIcon} onchange={setDockIcon} />{t('showDock')}</label>
         <label class="checkbox"><input type="checkbox" checked={session.settings.launchAtLogin} onchange={setLaunchAtLogin} />{t('launchAtLogin')}</label>
+        <button onclick={checkForUpdates}>{t('checkUpdates')}</button>
         <p class="settings-note">{t('allTabsExpiryNote')}</p>
         <button class="danger" onclick={clearWorkspace}>{t('clearWorkspace')}</button>
         <button class="danger" onclick={resetSettings}>{t('resetSettings')}</button>
