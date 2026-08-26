@@ -816,3 +816,27 @@ pub fn attach_from_setup(app: &AppHandle, state: &NativePanel) -> Result<(), Str
         .ok_or_else(|| "main WebView window not found".to_string())?;
     state.attach(&window)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{focus_result_for_target, AnimationTarget, PanelFrame};
+
+    const FRAME: PanelFrame = PanelFrame { x: 0.0, y: 0.0, width: 640.0, height: 900.0 };
+
+    #[test]
+    fn hidden_target_focus_stays_hidden_and_unfocused() {
+        assert_eq!(focus_result_for_target(&AnimationTarget::Hidden { frame: Some(FRAME) }), (false, false));
+    }
+
+    #[test]
+    fn visible_target_focus_stays_visible_and_focused() {
+        assert_eq!(focus_result_for_target(&AnimationTarget::Visible { frame: FRAME, edge: None }), (true, true));
+    }
+
+    #[test]
+    fn latest_hidden_target_wins_a_rapid_hide_then_focus() {
+        let mut latest = AnimationTarget::Visible { frame: FRAME, edge: None };
+        latest = AnimationTarget::Hidden { frame: Some(FRAME) };
+        assert_eq!(focus_result_for_target(&latest), (false, false));
+    }
+}
