@@ -124,20 +124,34 @@ fn detect_embeddable_preview(bytes: &[u8]) -> Option<&'static str> {
 
 #[cfg(target_os = "macos")]
 fn quick_look_thumbnail(source: &Path) -> Result<Vec<u8>, String> {
-    use std::process::Command;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_nanos();
     let output_dir: PathBuf = std::env::temp_dir().join(format!("edgedor-quicklook-{}-{nonce}", std::process::id()));
     std::fs::create_dir(&output_dir).map_err(|error| format!("无法创建 Quick Look 临时目录：{error}"))?;
     let result = (|| {
-        let output = Command::new("/usr/bin/qlmanage")
+        let mut child = Command::new("/usr/bin/qlmanage")
             .args(["-t", "-x", "-s", "1600", "-o"])
             .arg(&output_dir)
             .arg(source)
-            .output()
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
             .map_err(|error| format!("无法调用系统 Quick Look：{error}"))?;
-        if !output.status.success() { return Err("macOS Quick Look 不支持此文件".into()); }
+        let deadline = Instant::now() + Duration::from_secs(15);
+        let status = loop {
+            if let Some(status) = child.try_wait().map_err(|error| format!("无法等待系统 Quick Look：{error}"))? {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("Quick Look 预览超时".into());
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        };
+        if !status.success() { return Err("macOS Quick Look 不支持此文件".into()); }
         let preview_path = std::fs::read_dir(&output_dir)
             .map_err(|error| format!("无法读取 Quick Look 输出：{error}"))?
             .filter_map(Result::ok)
