@@ -6,12 +6,12 @@ const languageAliases: Record<string, string> = { js: 'javascript', jsx: 'javasc
 
 export function createEditor(container: HTMLElement, fontSize = 14, language = 'plaintext'): monaco.editor.IStandaloneCodeEditor {
   const model = monaco.editor.createModel('', languageAliases[language] ?? language);
-  return monaco.editor.create(container, { model, theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'vs-dark' : 'vs', fontFamily: 'SF Mono, Menlo, monospace', fontSize, automaticLayout: true, minimap: { enabled: true }, padding: { top: 18, bottom: 18 }, wordWrap: 'on' });
+  return monaco.editor.create(container, { model, theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'vs-dark' : 'vs', fontFamily: 'SF Mono, Menlo, monospace', fontSize, automaticLayout: true, minimap: { enabled: true }, columnSelection: true, multiCursorModifier: 'alt', padding: { top: 18, bottom: 18 }, wordWrap: 'on' });
 }
 
 const commandIds: Record<string, string> = {
   selectNextOccurrence: 'editor.action.addSelectionToNextFindMatch',
-  selectAllOccurrences: 'editor.action.selectHighlights',
+  selectAllOccurrences: 'editor.action.selectAllOccurrences',
   addCursorAbove: 'editor.action.insertCursorAbove',
   addCursorBelow: 'editor.action.insertCursorBelow',
   moveLineUp: 'editor.action.moveLinesUpAction',
@@ -20,15 +20,16 @@ const commandIds: Record<string, string> = {
   toggleComment: 'editor.action.commentLine'
 };
 
-function parseKeybinding(binding: string): number | undefined {
+export function parseKeybinding(binding: string): number | undefined {
   const parts = binding.split('+').map((part) => part.trim().toLowerCase());
-  if (parts.length === 0 || parts.some((part) => !part)) return undefined;
+  if (parts.length < 2 || parts.some((part) => !part)) return undefined;
   let value = 0;
   for (const part of parts.slice(0, -1)) {
-    if (part === 'cmd' || part === 'command' || part === 'meta') value |= monaco.KeyMod.CtrlCmd;
-    if (part === 'ctrl' || part === 'control' || part === 'cmdorctrl') value |= monaco.KeyMod.WinCtrl;
-    if (part === 'alt' || part === 'option') value |= monaco.KeyMod.Alt;
-    if (part === 'shift') value |= monaco.KeyMod.Shift;
+    if (part === 'cmd' || part === 'command' || part === 'meta' || part === 'cmdorctrl') value |= monaco.KeyMod.CtrlCmd;
+    else if (part === 'ctrl' || part === 'control') value |= monaco.KeyMod.WinCtrl;
+    else if (part === 'alt' || part === 'option') value |= monaco.KeyMod.Alt;
+    else if (part === 'shift') value |= monaco.KeyMod.Shift;
+    else return undefined;
   }
   const key = parts.at(-1) ?? '';
   if (key.length === 1 && /[a-z]/.test(key)) return value | (monaco.KeyCode.KeyA + key.charCodeAt(0) - 97);
@@ -73,13 +74,17 @@ function parseKeybinding(binding: string): number | undefined {
     enter: monaco.KeyCode.Enter,
     escape: monaco.KeyCode.Escape
   };
-  return named[key] ? value | named[key] : undefined;
+  return Object.prototype.hasOwnProperty.call(named, key) ? value | named[key] : undefined;
+}
+
+export function isValidShortcut(binding: string): boolean {
+  return Boolean(parseKeybinding(binding));
 }
 
 export function applyShortcutProfile(editor: monaco.editor.IStandaloneCodeEditor, profile: ShortcutProfile, overrides: Record<string, string> = {}): void {
   for (const command of Object.keys(shortcutProfiles[profile])) {
     const binding = resolveShortcut(profile, command as import('../shortcuts').EditorCommand, overrides);
-    const keybinding = binding ? parseKeybinding(binding) : undefined;
+    const keybinding = binding && isValidShortcut(binding) ? parseKeybinding(binding) : undefined;
     const commandId = commandIds[command];
     if (keybinding && commandId) editor.addCommand(keybinding, () => void editor.getAction(commandId)?.run());
   }
