@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { applyShortcutProfile, createEditor } from '../lib/editor/monaco';
+  import { applyShortcutOverrides, applyShortcutProfile, createEditor } from '../lib/editor/monaco';
   import { initVimMode } from 'monaco-vim';
   import * as monaco from 'monaco-editor';
   import type { SessionTab } from '../lib/session';
@@ -16,7 +16,8 @@
   onMount(() => {
     const editor = createEditor(host, fontSize, tab.language, editorVisibility);
     const vimMode = shortcutProfile === 'vim' ? initVimMode(editor, vimStatus) : undefined;
-    if (shortcutProfile !== 'vim') applyShortcutProfile(editor, shortcutProfile, shortcutOverrides);
+    if (shortcutProfile === 'vim') applyShortcutOverrides(editor, shortcutOverrides);
+    else applyShortcutProfile(editor, shortcutProfile, shortcutOverrides);
     editor.setValue(tab.content);
     if (tab.editor.viewState) {
       editor.restoreViewState(tab.editor.viewState as monaco.editor.ICodeEditorViewState);

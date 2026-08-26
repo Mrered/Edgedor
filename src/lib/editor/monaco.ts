@@ -1,5 +1,5 @@
 import * as monaco from 'monaco-editor';
-import type { ShortcutProfile } from '../shortcuts';
+import type { EditorCommand, ShortcutProfile } from '../shortcuts';
 import { resolveShortcut, shortcutProfiles } from '../shortcuts';
 
 const languageAliases: Record<string, string> = { js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript', rs: 'rust', py: 'python', md: 'markdown', yml: 'yaml', sh: 'shell' };
@@ -24,7 +24,7 @@ export function createEditor(container: HTMLElement, fontSize = 14, language = '
   return monaco.editor.create(container, { model, theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'vs-dark' : 'vs', fontFamily: 'SF Mono, Menlo, monospace', fontSize, automaticLayout: true, lineNumbers: options.showLineNumbers ? 'on' : 'off', minimap: { enabled: options.showMinimap }, folding: options.showFolding, glyphMargin: options.showGlyphMargin, columnSelection: true, multiCursorModifier: 'alt', padding: { top: 18, bottom: 18 }, wordWrap: 'on' });
 }
 
-const commandIds: Record<string, string> = {
+const commandIds: Record<EditorCommand, string> = {
   selectNextOccurrence: 'editor.action.addSelectionToNextFindMatch',
   selectAllOccurrences: 'editor.action.selectAllOccurrences',
   addCursorAbove: 'editor.action.insertCursorAbove',
@@ -96,11 +96,20 @@ export function isValidShortcut(binding: string): boolean {
   return Boolean(parseKeybinding(binding));
 }
 
+function registerCommand(editor: monaco.editor.IStandaloneCodeEditor, command: EditorCommand, binding: string | undefined): void {
+  const keybinding = binding ? parseKeybinding(binding) : undefined;
+  if (keybinding) editor.addCommand(keybinding, () => void editor.getAction(commandIds[command])?.run());
+}
+
 export function applyShortcutProfile(editor: monaco.editor.IStandaloneCodeEditor, profile: ShortcutProfile, overrides: Record<string, string> = {}): void {
   for (const command of Object.keys(shortcutProfiles[profile])) {
-    const binding = resolveShortcut(profile, command as import('../shortcuts').EditorCommand, overrides);
-    const keybinding = binding && isValidShortcut(binding) ? parseKeybinding(binding) : undefined;
-    const commandId = commandIds[command];
-    if (keybinding && commandId) editor.addCommand(keybinding, () => void editor.getAction(commandId)?.run());
+    const editorCommand = command as EditorCommand;
+    registerCommand(editor, editorCommand, resolveShortcut(profile, editorCommand, overrides));
+  }
+}
+
+export function applyShortcutOverrides(editor: monaco.editor.IStandaloneCodeEditor, overrides: Record<string, string>): void {
+  for (const [command, binding] of Object.entries(overrides)) {
+    if (Object.prototype.hasOwnProperty.call(commandIds, command)) registerCommand(editor, command as EditorCommand, binding);
   }
 }

@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "check:session": "node --experimental-strip-types src/lib/session/selfcheck.ts",
+    "check:shortcuts": "node --experimental-strip-types src/lib/shortcuts.selfcheck.ts",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "tauri": "tauri"
   },

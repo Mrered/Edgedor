@@ -26,6 +26,14 @@ export function isShortcutCommand(command: string): command is EditorCommand {
   return Object.prototype.hasOwnProperty.call(shortcutProfiles.vscode, command);
 }
 
+export function shortcutOverridesFingerprint(overrides: Record<string, string>): string {
+  return JSON.stringify(
+    Object.entries(overrides)
+      .filter(([command]) => isShortcutCommand(command))
+      .sort(([first], [second]) => first.localeCompare(second))
+  );
+}
+
 export function validateShortcut(binding: string): string | undefined {
   const value = binding.trim().replace(/\s+/g, '');
   if (!value || value.split('+').some((part) => !part)) return undefined;
