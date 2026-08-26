@@ -257,7 +257,7 @@ fn set_panel_animation(enabled: bool, duration_ms: u64, app: AppHandle) -> Resul
 
 #[tauri::command]
 fn panel_action(action: &str, app: AppHandle, state: State<'_, PanelState>) -> Result<PanelStatus, String> {
-    if !matches!(action, "show" | "focus" | "hide") {
+    if !matches!(action, "show" | "focus" | "hide" | "lower") {
         return Err("unsupported panel action".into());
     }
     let mut status = state.0.lock().map_err(|_| "panel state unavailable")?;
@@ -267,6 +267,7 @@ fn panel_action(action: &str, app: AppHandle, state: State<'_, PanelState>) -> R
     let native_result = match action {
         "show" | "focus" => (true, true),
         "hide" => (false, false),
+        "lower" => (status.visible, false),
         _ => unreachable!(),
     };
     (status.visible, status.focused) = native_result;

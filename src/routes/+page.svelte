@@ -418,8 +418,10 @@
     window.addEventListener('dragover', onDragOver);
     window.addEventListener('drop', openDroppedFile);
     window.addEventListener('paste', openPastedFiles);
-    const onWindowBlur = () => { if (!pinned && status.visible) void panelAction('hide'); };
+    const onWindowBlur = () => { if (status.visible) void panelAction(pinned ? 'lower' : 'hide'); };
+    const onWindowFocus = () => { if (status.visible) void panelAction('focus'); };
     window.addEventListener('blur', onWindowBlur);
+    window.addEventListener('focus', onWindowFocus);
     void (async () => {
       unlisten = await listenPanelStatus((next) => { if (status.visible && !next.visible) persist(session); status = next; });
       unlistenPaths = await listen<string[]>('open_paths', (event) => { for (const path of event.payload) void openPath(path); });
@@ -427,7 +429,7 @@
       for (const path of initialPaths) await openPath(path);
       if (initialPaths.length > 0) await panelAction('show');
     })();
-    return () => { persist(session); unlisten?.(); unlistenPaths?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); window.removeEventListener('paste', openPastedFiles); window.removeEventListener('blur', onWindowBlur); };
+    return () => { persist(session); unlisten?.(); unlistenPaths?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); window.removeEventListener('paste', openPastedFiles); window.removeEventListener('blur', onWindowBlur); window.removeEventListener('focus', onWindowFocus); };
   });
 </script>
 <svelte:head><title>{t('appTitle')}</title></svelte:head>
