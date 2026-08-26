@@ -448,13 +448,13 @@
     window.addEventListener('blur', onWindowBlur);
     window.addEventListener('focus', onWindowFocus);
     void (async () => {
+      unlistenQuit = await listen('quit_requested', () => { void requestQuit(); });
       unlisten = await listenPanelStatus((next) => {
         if (panelStatusInitialized && status.visible && !next.visible) checkpoint(session);
         status = next;
         panelStatusInitialized = true;
       });
       unlistenPaths = await listen<string[]>('open_paths', (event) => { for (const path of event.payload) void openPath(path); });
-      unlistenQuit = await listen('quit_requested', () => { void requestQuit(); });
       const initialPaths = await invoke<string[]>('startup_paths');
       for (const path of initialPaths) await openPath(path);
       if (initialPaths.length > 0) await panelAction('show');

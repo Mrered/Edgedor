@@ -9,6 +9,7 @@ const MAX_GENERATED_PREVIEW_SIZE: u64 = 25 * 1024 * 1024;
 
 #[cfg(target_os = "macos")]
 mod native_panel;
+mod shutdown;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -205,7 +206,11 @@ fn set_panel_pinned(pinned: bool, app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn quit_app(app: AppHandle) { app.exit(0); }
+fn quit_app(app: AppHandle, shutdown: State<'_, std::sync::Mutex<shutdown::ShutdownState>>) -> Result<(), String> {
+    shutdown.lock().map_err(|_| "shutdown state unavailable")?.confirm_exit();
+    app.exit(0);
+    Ok(())
+}
 
 #[tauri::command]
 fn startup_paths() -> Vec<String> { std::env::args().skip(1).filter(|path| !path.starts_with('-')).collect() }
@@ -282,10 +287,12 @@ fn panel_action(action: &str, app: AppHandle, state: State<'_, PanelState>) -> R
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let state = PanelState(std::sync::Mutex::new(PanelStatus { visible: false, focused: false, bridge_ready: false, trigger_edge: None }));
-    let builder = tauri::Builder::default().manage(state);
+    let builder = tauri::Builder::default()
+        .manage(state)
+        .manage(std::sync::Mutex::new(shutdown::ShutdownState::default()));
     #[cfg(target_os = "macos")]
     let builder = builder.manage(native_panel::NativePanel::default());
-    builder
+    let app = builder
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             let paths: Vec<String> = args.into_iter().skip(1).filter(|path| !path.starts_with('-')).collect();
             if !paths.is_empty() { let _ = app.emit("open_paths", paths); }
@@ -325,6 +332,23 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+    app.run(|app, event| {
+        if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
+            let decision = app
+                .state::<std::sync::Mutex<shutdown::ShutdownState>>()
+                .lock()
+                .map(|mut state| state.exit_requested(code))
+                .unwrap_or(shutdown::ExitDecision::Prevent);
+            match decision {
+                shutdown::ExitDecision::Allow => {}
+                shutdown::ExitDecision::PreventAndRequestCheckpoint => {
+                    api.prevent_exit();
+                    let _ = app.emit("quit_requested", ());
+                }
+                shutdown::ExitDecision::Prevent => api.prevent_exit(),
+            }
+        }
+    });
 }
