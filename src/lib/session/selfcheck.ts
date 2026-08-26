@@ -1,4 +1,6 @@
 import {
+  MAX_EDITOR_GROUPS,
+  MIN_GROUP_RATIO,
   MAX_UNDO_SLOTS,
   TAB_EXPIRY_MS,
   addTab,
@@ -10,6 +12,8 @@ import {
   expireTabs,
   focusTab,
   moveTabToGroup,
+  removeGroup,
+  resizeAdjacentGroups,
   restoreLatest,
   serializeSettings,
   deserializeSettings,
@@ -27,6 +31,12 @@ import {
 
 const assert = (condition: unknown, message: string) => {
   if (!condition) throw new Error(`session self-check failed: ${message}`);
+};
+
+const assertRatios = (state: ReturnType<typeof createSessionState>, message: string) => {
+  const ratios = state.groups.map((group) => group.splitRatio ?? Number.NaN);
+  assert(ratios.every((ratio) => Number.isFinite(ratio) && ratio >= MIN_GROUP_RATIO - 1e-9), `${message}: ratios stay finite and above minimum`);
+  assert(Math.abs(ratios.reduce((sum, ratio) => sum + ratio, 0) - 1) < 1e-9, `${message}: ratios sum to one`);
 };
 
 class MemoryStorage implements SessionStorage {
@@ -75,6 +85,90 @@ const splitState = createGroup(state);
 const targetGroupId = splitState.groups[1]?.id ?? 'missing';
 const movedState = moveTabToGroup(splitState, tab.id, targetGroupId, start + 2_000);
 assert(movedState.tabs.find((candidate) => candidate.id === tab.id)?.groupId === targetGroupId, 'moves tab between groups');
+
+let fourGroups = createSessionState(start);
+fourGroups = createGroup(fourGroups, 'vertical', 0.5, 'group-2');
+fourGroups = createGroup(fourGroups, 'vertical', 0.5, 'group-3');
+fourGroups = createGroup(fourGroups, 'vertical', 0.5, 'group-4');
+assert(fourGroups.groups.length === MAX_EDITOR_GROUPS, 'creates four editor groups');
+assert(fourGroups.groups.map((group) => group.id).join(',') === 'group-1,group-2,group-3,group-4', 'inserts each new group after the active group');
+assert(fourGroups.activeGroupId === 'group-4', 'activates the newly created group');
+assertRatios(fourGroups, 'four-group creation');
+const rejectedFifth = createGroup(fourGroups, 'vertical', 0.5, 'group-5');
+assert(rejectedFifth === fourGroups, 'rejects a fifth editor group without changing state');
+
+const beforeResize = fourGroups.groups.map((group) => group.splitRatio ?? 0);
+const resizedGroups = resizeAdjacentGroups(fourGroups, 1, 0.18);
+const afterResize = resizedGroups.groups.map((group) => group.splitRatio ?? 0);
+assert(Math.abs(afterResize[0] - beforeResize[0]) < 1e-9 && Math.abs(afterResize[3] - beforeResize[3]) < 1e-9, 'adjacent resize leaves non-adjacent groups unchanged');
+assert(Math.abs((afterResize[1] + afterResize[2]) - (beforeResize[1] + beforeResize[2])) < 1e-9, 'adjacent resize preserves pair weight');
+assertRatios(resizedGroups, 'adjacent resize');
+
+let activeRemoval = createSessionState(start);
+activeRemoval = addTab(activeRemoval, createTab({ id: 'left-tab', groupId: 'group-1', now: start }));
+activeRemoval = createGroup(activeRemoval, 'vertical', 0.5, 'group-2');
+activeRemoval = addTab(activeRemoval, createTab({ id: 'middle-tab', groupId: 'group-2', now: start }), 'group-2');
+activeRemoval = createGroup(activeRemoval, 'vertical', 0.5, 'group-3');
+activeRemoval = addTab(activeRemoval, createTab({ id: 'right-tab', groupId: 'group-3', now: start }), 'group-3');
+activeRemoval = focusTab(activeRemoval, 'middle-tab', start + 1);
+const removedActive = removeGroup(activeRemoval, 'group-2');
+assert(removedActive.activeGroupId === 'group-3', 'active middle group transfers activity to its right visual neighbor');
+assert(removedActive.groups.find((group) => group.id === 'group-3')?.activeTabId === 'middle-tab', 'active removed tab remains active in receiving group');
+assert(removedActive.tabs.find((candidate) => candidate.id === 'middle-tab')?.groupId === 'group-3', 'active removed tabs move to receiving group');
+assertRatios(removedActive, 'active group removal');
+
+const nonActiveRemoval = focusTab(activeRemoval, 'left-tab', start + 2);
+const preservedActive = removeGroup(nonActiveRemoval, 'group-2');
+assert(preservedActive.activeGroupId === 'group-1', 'removing inactive group preserves active group');
+assert(preservedActive.groups.find((group) => group.id === 'group-1')?.activeTabId === 'left-tab', 'removing inactive group preserves active tab');
+
+const legacyTabA = createTab({ id: 'legacy-a', groupId: 'group-1', now: start });
+const legacyTabB = createTab({ id: 'legacy-b', groupId: 'group-2', now: start });
+const legacy = deserializeSession(JSON.stringify({
+  ...createSessionState(start),
+  tabs: [legacyTabA, legacyTabB],
+  groups: [
+    { id: 'group-1', tabIds: ['legacy-a'], activeTabId: 'legacy-a' },
+    { id: 'group-2', parentId: 'group-1', orientation: 'horizontal', splitRatio: 0.3, tabIds: ['legacy-b'], activeTabId: 'legacy-b' }
+  ],
+  activeGroupId: 'group-2'
+}));
+assert(legacy?.splitOrientation === 'horizontal', 'migrates legacy split orientation');
+assert(Math.abs((legacy?.groups[0]?.splitRatio ?? 0) - 0.7) < 1e-9 && Math.abs((legacy?.groups[1]?.splitRatio ?? 0) - 0.3) < 1e-9, 'migrates legacy child ratio to flat weights');
+assert(legacy?.groups.every((group) => !('parentId' in group) && !('orientation' in group)), 'removes legacy group split fields');
+
+const orphanA = createTab({ id: 'orphan-a', groupId: 'missing-a', now: start });
+const orphanB = createTab({ id: 'orphan-b', groupId: 'missing-b', now: start });
+const repairedEmpty = deserializeSession(JSON.stringify({
+  ...createSessionState(start),
+  tabs: [orphanA, orphanB],
+  groups: [],
+  activeGroupId: 'missing'
+}));
+assert(repairedEmpty?.groups.length === 1 && repairedEmpty.groups[0]?.tabIds.join(',') === 'orphan-a,orphan-b', 'repairs zero-group snapshot in tab order');
+assert(repairedEmpty?.tabs.every((candidate) => candidate.groupId === repairedEmpty.groups[0]?.id), 'repairs orphan tab group references');
+assert(repairedEmpty?.activeGroupId === repairedEmpty?.groups[0]?.id && repairedEmpty?.groups[0]?.activeTabId === 'orphan-b', 'repairs invalid active references');
+if (repairedEmpty) assertRatios(repairedEmpty, 'zero-group repair');
+
+const overflowTabs = Array.from({ length: 7 }, (_, index) => createTab({ id: `overflow-${index + 1}`, groupId: `group-${index + 1}`, now: start + index }));
+const repairedOverflow = deserializeSession(JSON.stringify({
+  ...createSessionState(start),
+  tabs: overflowTabs,
+  groups: Array.from({ length: 6 }, (_, index) => ({ id: `group-${index + 1}`, splitRatio: index === 1 ? Number.NaN : 1, tabIds: [`overflow-${index + 1}`], activeTabId: `missing-${index + 1}` })),
+  activeGroupId: 'group-6',
+  splitOrientation: 'invalid'
+}));
+assert(repairedOverflow?.groups.length === MAX_EDITOR_GROUPS, 'truncates snapshots above four groups');
+assert(repairedOverflow?.groups[3]?.tabIds.join(',') === 'overflow-4,overflow-5,overflow-6,overflow-7', 'merges truncated and unregistered tabs into fourth group deterministically');
+assert(repairedOverflow?.tabs.slice(3).every((candidate) => candidate.groupId === repairedOverflow.groups[3]?.id), 'rewrites merged tab group references');
+assert(repairedOverflow?.splitOrientation === 'vertical', 'repairs invalid shared orientation');
+assert(repairedOverflow?.activeGroupId === 'group-4' && repairedOverflow.groups[3]?.activeTabId === 'overflow-7', 'repairs invalid active group and tab deterministically');
+if (repairedOverflow) assertRatios(repairedOverflow, 'overflow repair');
+
+const restoredGroups = deserializeSession(serializeSession(fourGroups));
+assert(restoredGroups?.groups.map((group) => group.id).join(',') === fourGroups.groups.map((group) => group.id).join(','), 'round-trips flat group order');
+assert(restoredGroups?.activeGroupId === fourGroups.activeGroupId && restoredGroups?.splitOrientation === fourGroups.splitOrientation, 'round-trips active group and shared orientation');
+if (restoredGroups) assertRatios(restoredGroups, 'serialized group restoration');
 for (let index = 0; index < MAX_UNDO_SLOTS + 2; index += 1) {
   const extraTab = createTab({ id: `extra-${index}`, now: start });
   state = addTab(state, extraTab);
