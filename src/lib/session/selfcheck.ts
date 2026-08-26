@@ -11,6 +11,8 @@ import {
   focusTab,
   moveTabToGroup,
   restoreLatest,
+  serializeSettings,
+  deserializeSettings,
   serializeSession
 } from './model.ts';
 
@@ -51,4 +53,8 @@ for (let index = 0; index < MAX_UNDO_SLOTS + 2; index += 1) {
 assert(state.undoSlots.length === MAX_UNDO_SLOTS, 'caps undo slots');
 const restored = deserializeSession(serializeSession(state));
 assert(restored?.tabs.length === state.tabs.length, 'round-trips serialized state');
+const settingsRoundTrip = deserializeSettings(serializeSettings(createSessionState().settings));
+assert(settingsRoundTrip?.preserveOnRestart === true && settingsRoundTrip?.shortcutProfile === 'vscode', 'round-trips settings independently');
+const expiredAtStartup = expireTabs(addTab(createSessionState(start), createTab({ id: 'old', now: start })), start + TAB_EXPIRY_MS);
+assert(expiredAtStartup.expired.length === 1 && expiredAtStartup.state.undoSlots[0]?.tab.id === 'old', 'expires temporary tabs during startup recovery');
 console.log('Edgedor session self-check passed');

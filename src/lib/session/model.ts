@@ -69,6 +69,17 @@ export interface SessionState {
   settings: SessionSettings;
 }
 
+export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
+  preserveOnRestart: true,
+  shortcutProfile: 'vscode',
+  shortcutOverrides: {},
+  fontSize: 14,
+  showMenuBarIcon: true,
+  edgeModifier: 'command',
+  tabLayout: 'top',
+  pinned: false
+};
+
 export interface NewTabInput {
   kind?: TabKind;
   content?: string;
@@ -133,7 +144,7 @@ export function createSessionState(now = Date.now()): SessionState {
     groups: [group],
     activeGroupId: group.id,
     undoSlots: [],
-    settings: { preserveOnRestart: true, shortcutProfile: 'vscode', shortcutOverrides: {}, fontSize: 14, showMenuBarIcon: true, edgeModifier: 'command', tabLayout: 'top', pinned: false }
+    settings: { ...DEFAULT_SESSION_SETTINGS, shortcutOverrides: { ...DEFAULT_SESSION_SETTINGS.shortcutOverrides } }
   };
 }
 
@@ -279,11 +290,38 @@ export function serializeSession(state: SessionState): string {
   return JSON.stringify({ ...state, tabs, version: SESSION_VERSION });
 }
 
+export function serializeSettings(settings: SessionSettings): string {
+  return JSON.stringify(settings);
+}
+
+export function deserializeSettings(serialized: string): SessionSettings | undefined {
+  try {
+    const parsed = JSON.parse(serialized) as Partial<SessionSettings>;
+    if (!parsed || typeof parsed !== 'object') return undefined;
+    return normalizeSettings(parsed);
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeSettings(input: Partial<SessionSettings>): SessionSettings {
+  return {
+    preserveOnRestart: input.preserveOnRestart ?? DEFAULT_SESSION_SETTINGS.preserveOnRestart,
+    shortcutProfile: input.shortcutProfile ?? DEFAULT_SESSION_SETTINGS.shortcutProfile,
+    shortcutOverrides: input.shortcutOverrides ?? {},
+    fontSize: input.fontSize ?? DEFAULT_SESSION_SETTINGS.fontSize,
+    showMenuBarIcon: input.showMenuBarIcon ?? DEFAULT_SESSION_SETTINGS.showMenuBarIcon,
+    edgeModifier: input.edgeModifier ?? DEFAULT_SESSION_SETTINGS.edgeModifier,
+    tabLayout: input.tabLayout ?? DEFAULT_SESSION_SETTINGS.tabLayout,
+    pinned: input.pinned ?? DEFAULT_SESSION_SETTINGS.pinned
+  };
+}
+
 export function deserializeSession(serialized: string): SessionState | undefined {
   try {
     const parsed = JSON.parse(serialized) as SessionState;
     if (parsed?.version !== SESSION_VERSION || !Array.isArray(parsed.tabs) || !Array.isArray(parsed.groups)) return undefined;
-    parsed.settings = { preserveOnRestart: parsed.settings?.preserveOnRestart ?? true, shortcutProfile: parsed.settings?.shortcutProfile ?? 'vscode', shortcutOverrides: parsed.settings?.shortcutOverrides ?? {}, fontSize: parsed.settings?.fontSize ?? 14, showMenuBarIcon: parsed.settings?.showMenuBarIcon ?? true, edgeModifier: parsed.settings?.edgeModifier ?? 'command', tabLayout: parsed.settings?.tabLayout ?? 'top', pinned: parsed.settings?.pinned ?? false };
+    parsed.settings = normalizeSettings(parsed.settings ?? {});
     return parsed;
   } catch {
     return undefined;

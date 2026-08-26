@@ -7,8 +7,8 @@
   import PreviewSurface from '../components/PreviewSurface.svelte';
   import ToolbarMount from '../components/ToolbarMount.svelte';
   import { listenPanelStatus, panelAction, type PanelStatus } from '../lib/tauri/panel';
-  import { addTab, closeTab, createGroup, createSessionState, createTab, deserializeSession, expireTabs, focusTab, moveTabToGroup, removeGroup, restoreLatest, serializeSession, setGroupRatio, updateTab, type EditorGroup, type EditorSnapshot, type SessionState, type SessionTab } from '../lib/session';
-  import type { EditorCommand } from '../lib/shortcuts';
+  import { addTab, closeTab, createGroup, createSessionState, createTab, deserializeSession, deserializeSettings, expireTabs, focusTab, moveTabToGroup, removeGroup, restoreLatest, serializeSession, serializeSettings, setGroupRatio, updateTab, type EditorGroup, type EditorSnapshot, type SessionState, type SessionTab } from '../lib/session';
+  import { validateShortcut, type EditorCommand } from '../lib/shortcuts';
   let status: PanelStatus = { visible: true, focused: true, bridgeReady: false };
   let pinned = false;
   let session: SessionState = createSessionState();
@@ -37,7 +37,11 @@
     { id: 'toggleComment', label: '切换行注释' }
   ];
   $: activeTab = session.tabs.find((tab) => tab.id === session.groups.find((group) => group.id === session.activeGroupId)?.activeTabId);
-  function persist(next: SessionState) { session = next; if (session.settings.preserveOnRestart) localStorage.setItem('edgedor.session', serializeSession(session)); else localStorage.removeItem('edgedor.session'); }
+  const SESSION_KEY = 'edgedor.session';
+  const SETTINGS_KEY = 'edgedor.settings';
+  function persistSettings(settings: SessionState['settings']) { localStorage.setItem(SETTINGS_KEY, serializeSettings(settings)); }
+  function persist(next: SessionState) { session = next; persistSettings(session.settings); if (session.settings.preserveOnRestart) localStorage.setItem(SESSION_KEY, serializeSession(session)); else localStorage.removeItem(SESSION_KEY); }
+  function updateEphemeral(next: SessionState) { session = next; }
   function newTab() { persist(addTab(session, createTab())); }
   function closeTabById(tabId: string) {
     const tab = session.tabs.find((candidate) => candidate.id === tabId);
@@ -63,9 +67,9 @@
     if (noticeTimer) window.clearTimeout(noticeTimer);
     noticeTimer = window.setTimeout(() => { notice = ''; }, 4200);
   }
-  function editContentFor(tabId: string, content: string) { persist(updateTab(session, tabId, { content })); }
+  function editContentFor(tabId: string, content: string) { updateEphemeral(updateTab(session, tabId, { content })); }
   function editContent(content: string) { if (activeTab) editContentFor(activeTab.id, content); }
-  function editStateFor(tabId: string, editor: EditorSnapshot) { persist(updateTab(session, tabId, { editor })); }
+  function editStateFor(tabId: string, editor: EditorSnapshot) { updateEphemeral(updateTab(session, tabId, { editor })); }
   async function saveActive() {
     if (!activeTab) return;
     const path = activeTab.filePath ?? await save({ defaultPath: `${activeTab.title.replace(/[^\w.-]+/g, '-')}.txt`, filters: [{ name: '文本文件', extensions: ['txt', 'md', 'json', 'js', 'ts', 'rs', 'py'] }] });
@@ -75,8 +79,8 @@
   }
   async function togglePinned() { pinned = !pinned; persist({ ...session, settings: { ...session.settings, pinned } }); await invoke('set_panel_pinned', { pinned }); }
   function setShortcutProfile(event: Event) { const value = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['shortcutProfile']; persist({ ...session, settings: { ...session.settings, shortcutProfile: value } }); }
-  function setShortcutOverride(command: EditorCommand, event: Event) { const value = (event.currentTarget as HTMLInputElement).value.trim(); const shortcutOverrides = { ...session.settings.shortcutOverrides }; if (value) shortcutOverrides[command] = value; else delete shortcutOverrides[command]; persist({ ...session, settings: { ...session.settings, shortcutOverrides } }); }
-  function setPreserveOnRestart(event: Event) { const preserve = (event.currentTarget as HTMLInputElement).checked; const next = { ...session, settings: { ...session.settings, preserveOnRestart: preserve } }; session = next; if (preserve) localStorage.setItem('edgedor.session', serializeSession(next)); else localStorage.removeItem('edgedor.session'); }
+  function setShortcutOverride(command: EditorCommand, event: Event) { const raw = (event.currentTarget as HTMLInputElement).value; const value = validateShortcut(raw); const shortcutOverrides = { ...session.settings.shortcutOverrides }; if (raw.trim() && !value) { showNotice('快捷键格式无效，例如 Cmd+Shift+L'); (event.currentTarget as HTMLInputElement).value = shortcutOverrides[command] ?? ''; return; } if (value) shortcutOverrides[command] = value; else delete shortcutOverrides[command]; persist({ ...session, settings: { ...session.settings, shortcutOverrides } }); }
+  function setPreserveOnRestart(event: Event) { const preserve = (event.currentTarget as HTMLInputElement).checked; const next = { ...session, settings: { ...session.settings, preserveOnRestart: preserve } }; session = next; persistSettings(next.settings); if (preserve) localStorage.setItem(SESSION_KEY, serializeSession(next)); else localStorage.removeItem(SESSION_KEY); }
   async function setMenuBarIcon(event: Event) { const visible = (event.currentTarget as HTMLInputElement).checked; persist({ ...session, settings: { ...session.settings, showMenuBarIcon: visible } }); await invoke('set_menu_bar_icon_visible', { visible }); }
   async function setEdgeModifier(event: Event) {
     const modifier = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['edgeModifier'];
@@ -121,6 +125,12 @@
     const next = createGroup(session, 'vertical');
     persist(addTab(next, createTab(), next.activeGroupId));
   }
+  function splitOrientation(): 'horizontal' | 'vertical' { return session.groups.find((group) => group.parentId)?.orientation ?? 'vertical'; }
+  function toggleSplitOrientation() {
+    if (session.groups.length < 2) return;
+    const orientation = splitOrientation() === 'vertical' ? 'horizontal' : 'vertical';
+    persist({ ...session, groups: session.groups.map((group) => group.parentId ? { ...group, orientation } : group) });
+  }
   function closeSplit() {
     if (session.groups.length <= 1) { showNotice('当前只有一个编辑分区'); return; }
     persist(removeGroup(session, session.activeGroupId));
@@ -153,18 +163,19 @@
     const preview = await invoke<{ path: string; data_url: string; mime: string }>('preview_file', { path });
     persist(addTab(session, createTab({ kind: 'preview', filePath: preview.path, content: preview.data_url, language: 'preview', title: title ?? path.split('/').at(-1), readOnly: true, previewDataUrl: preview.data_url, previewMime: preview.mime })));
   }
-  async function rehydratePreviews(next: SessionState) {
-    const previews = next.tabs.filter((tab) => tab.kind === 'preview' && tab.filePath);
-    for (const tab of previews) {
+  async function rehydratePreviews() {
+    const previews = session.tabs.filter((tab) => tab.kind === 'preview' && tab.filePath).map((tab) => ({ id: tab.id, path: tab.filePath as string, title: tab.title }));
+    for (const previewTab of previews) {
       try {
-        const preview = await invoke<{ path: string; data_url: string; mime: string }>('preview_file', { path: tab.filePath });
-        next = updateTab(next, tab.id, { content: preview.data_url, previewDataUrl: preview.data_url, previewMime: preview.mime, readOnly: true });
+        const preview = await invoke<{ path: string; data_url: string; mime: string }>('preview_file', { path: previewTab.path });
+        const current = session.tabs.find((tab) => tab.id === previewTab.id);
+        if (current?.kind === 'preview' && current.filePath === previewTab.path) updateEphemeral(updateTab(session, previewTab.id, { content: preview.data_url, previewDataUrl: preview.data_url, previewMime: preview.mime, readOnly: true }));
       } catch {
-        next = closeTab(next, tab.id, Date.now(), 'closed');
-        showNotice(`${tab.title} 无法恢复，已关闭`);
+        if (session.tabs.some((tab) => tab.id === previewTab.id)) updateEphemeral(closeTab(session, previewTab.id, Date.now(), 'closed'));
+        showNotice(`${previewTab.title} 无法恢复，已关闭`);
       }
     }
-    if (next !== session) persist(next);
+    persist(session);
   }
   async function openPath(path: string, title?: string) {
     if (isPreviewPath(path)) {
@@ -199,12 +210,18 @@
     for (const file of files) if (file.path) await openPath(file.path, file.name);
   }
   onMount(() => {
-    const saved = deserializeSession(localStorage.getItem('edgedor.session') ?? '');
-    if (saved && !saved.settings.preserveOnRestart) localStorage.removeItem('edgedor.session');
-    const restored = saved?.settings.preserveOnRestart ? saved : addTab(session, createTab());
+    const storedSettings = deserializeSettings(localStorage.getItem(SETTINGS_KEY) ?? '');
+    const saved = deserializeSession(localStorage.getItem(SESSION_KEY) ?? '');
+    const settings = storedSettings ?? saved?.settings ?? session.settings;
+    const restoredBase = saved && settings.preserveOnRestart ? { ...saved, settings } : { ...session, settings };
+    const expiredOnStartup = expireTabs(restoredBase);
+    const restored = saved && settings.preserveOnRestart
+      ? expiredOnStartup.state
+      : addTab(expiredOnStartup.state, createTab());
     const restoredActiveTabId = restored.groups.find((group) => group.id === restored.activeGroupId)?.activeTabId;
     session = restoredActiveTabId ? focusTab(restored, restoredActiveTabId) : restored;
-    void rehydratePreviews(session);
+    persist(restored);
+    void rehydratePreviews();
     pinned = session.settings.pinned;
     void invoke('set_menu_bar_icon_visible', { visible: session.settings.showMenuBarIcon });
     void invoke('set_panel_pinned', { pinned });
@@ -220,26 +237,26 @@
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 'n') { event.preventDefault(); newTab(); }
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 'w') { event.preventDefault(); closeActive(); }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 't') { event.preventDefault(); restoreClosed(); }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'q') { event.preventDefault(); void invoke('quit_app'); }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'q') { event.preventDefault(); persist(session); void invoke('quit_app'); }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'f') { event.preventDefault(); openSearch(); }
-      if ((event.metaKey || event.ctrlKey) && event.key === ',') { event.preventDefault(); (document.querySelector('select[aria-label="编辑器快捷键方案"]') as HTMLSelectElement | null)?.focus(); }
+      if ((event.metaKey || event.ctrlKey) && event.key === ',') { event.preventDefault(); openSettings(); }
     };
     window.addEventListener('keydown', onKeyDown);
     const onDragOver = (event: DragEvent) => event.preventDefault();
     window.addEventListener('dragover', onDragOver);
     window.addEventListener('drop', openDroppedFile);
     void (async () => {
-      unlisten = await listenPanelStatus((next) => (status = next));
+      unlisten = await listenPanelStatus((next) => { if (status.visible && !next.visible) persist(session); status = next; });
       unlistenPaths = await listen<string[]>('open_paths', (event) => { for (const path of event.payload) void openPath(path); });
       const initialPaths = await invoke<string[]>('startup_paths');
       for (const path of initialPaths) await openPath(path);
       await panelAction('show');
     })();
-    return () => { unlisten?.(); unlistenPaths?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); };
+    return () => { persist(session); unlisten?.(); unlistenPaths?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); };
   });
 </script>
 <svelte:head><title>Edgedor</title></svelte:head>
-<main class="shell" class:side-tabs={session.settings.tabLayout !== 'top'} class:side-tabs-right={session.settings.tabLayout === 'right'}>
+  <main class="shell" class:side-tabs={session.settings.tabLayout !== 'top'} class:side-tabs-right={session.settings.tabLayout === 'right'}>
   <ToolbarMount />
   <header class="toolbar" aria-label="工作台工具栏">
     <button onclick={newTab} title="新建临时标签">＋ 新建</button>
@@ -247,6 +264,7 @@
     <button onclick={openPreviewFile}>预览文件</button>
     <button onclick={saveActive} disabled={!activeTab || activeTab.kind === 'preview'} title="保存当前标签（⌘S）">保存{activeTab?.dirty ? ' ·' : ''}</button>
     <button onclick={addSplit} disabled={session.groups.length >= 2} title="新建编辑分区（最多两个）">分区</button>
+    {#if session.groups.length > 1}<button onclick={toggleSplitOrientation} title="切换分区方向">{splitOrientation() === 'vertical' ? '上下分区' : '左右分区'}</button>{/if}
     <button onclick={closeSplit} disabled={session.groups.length <= 1} title="合并当前编辑分区">合并</button>
     <span class="toolbar-spacer"></span>
     <button onclick={openSearch} title="跨标签查找（⌘⇧F）">查找</button>
@@ -263,7 +281,7 @@
     {#if session.tabs.length === 0}<button class="empty-tab" onclick={newTab}>新建临时标签</button>{/if}
     <button class="restore" onclick={restoreClosed} disabled={session.undoSlots.length === 0} title={session.undoSlots[0] ? `${session.undoSlots[0].tab.title} · ${session.undoSlots[0].reason === 'expired' ? '超时' : '关闭'}` : '没有撤销记录'}>撤销关闭{session.undoSlots.length ? ` (${session.undoSlots.length})` : ''}</button>
   </nav>
-  <section class:split-workspace={session.groups.length > 1} class="workspace" aria-label="临时编辑区">
+  <section class:split-workspace={session.groups.length > 1} class:split-horizontal={splitOrientation() === 'horizontal'} class="workspace" aria-label="临时编辑区">
     {#each session.groups as group (group.id)}
       {@const tab = groupTab(group)}
       <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={`编辑分区 ${group.id}`} ondragover={(event) => event.preventDefault()} ondrop={(event) => dropTabInGroup(group.id, event)}>
@@ -342,6 +360,7 @@
   .empty-tab { border: 0; border-radius: 7px; padding: 5px 9px; color: var(--muted); background: transparent; }
   .workspace { min-height: 0; flex: 1; display: flex; }
   .split-workspace { gap: 1px; background: color-mix(in srgb, var(--text) 12%, transparent); }
+  .split-workspace.split-horizontal { flex-direction: column; }
   .editor-group { min-width: 0; min-height: 0; flex: 1; display: flex; background: var(--panel); }
   .empty { margin: auto; border: 0; border-radius: 8px; padding: 10px 14px; }
   .notice { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 7px 12px; border-radius: 9px; color: var(--text); background: color-mix(in srgb, var(--panel) 88%, var(--text)); box-shadow: 0 5px 25px rgba(0,0,0,.18); font-size: 12px; }
