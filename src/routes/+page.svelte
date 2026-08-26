@@ -11,7 +11,7 @@
   import ToolbarMount from '../components/ToolbarMount.svelte';
   import { listenPanelStatus, panelAction, type PanelStatus } from '../lib/tauri/panel';
   import { createTranslator } from '../lib/i18n';
-  import { DEFAULT_SESSION_SETTINGS, addTab, closeTab, createGroup, createSessionState, createTab, deserializeSession, deserializeSettings, expireTabs, focusTab, moveTabToGroup, removeGroup, restoreLatest, serializeSession, serializeSettings, setGroupRatio, touchTab, updateTab, type EditorGroup, type EditorSnapshot, type SessionState, type SessionTab } from '../lib/session';
+  import { DEFAULT_SESSION_SETTINGS, SESSION_KEY, SETTINGS_KEY, addTab, clearSessionCheckpoint, closeTab, createGroup, createSessionState, createTab, deserializeSettings, expireTabs, focusTab, moveTabToGroup, persistSessionSettings, readSessionCheckpoint, removeGroup, restoreLatest, setGroupRatio, touchTab, updateTab, writeSessionCheckpoint, type EditorGroup, type EditorSnapshot, type SessionSettings, type SessionState, type SessionTab } from '../lib/session';
   import { shortcutOverridesFingerprint, validateShortcut, type EditorCommand } from '../lib/shortcuts';
   let status: PanelStatus = { visible: true, focused: true, bridgeReady: false };
   let pinned = false;
@@ -19,6 +19,9 @@
   let activeTab: SessionTab | undefined;
   let unlisten: (() => void) | undefined;
   let unlistenPaths: (() => void) | undefined;
+  let unlistenQuit: (() => void) | undefined;
+  let panelStatusInitialized = false;
+  let quitInProgress = false;
   let expiryTimer: number | undefined;
   let showSettings = false;
   let showSearch = false;
@@ -47,16 +50,28 @@
     { id: 'toggleComment', label: t('toggleComment') }
   ];
   $: activeTab = session.tabs.find((tab) => tab.id === session.groups.find((group) => group.id === session.activeGroupId)?.activeTabId);
-  const SESSION_KEY = 'edgedor.session';
-  const SETTINGS_KEY = 'edgedor.settings';
-  function persistSettings(settings: SessionState['settings']) { localStorage.setItem(SETTINGS_KEY, serializeSettings(settings)); }
-  function persist(next: SessionState) { session = next; persistSettings(session.settings); if (session.settings.preserveOnRestart) localStorage.setItem(SESSION_KEY, serializeSession(session)); else localStorage.removeItem(SESSION_KEY); }
-  function updateEphemeral(next: SessionState) { session = next; }
-  function newTab() { persist(addTab(session, createTab())); }
+  function applySession(next: SessionState) { session = next; }
+  function updateSettings(settings: SessionSettings) {
+    applySession({ ...session, settings });
+    persistSessionSettings(localStorage, settings);
+  }
+  function checkpoint(next: SessionState = session) {
+    applySession(next);
+    writeSessionCheckpoint(localStorage, next);
+  }
+  function activeLocation(state: SessionState): string {
+    const group = state.groups.find((candidate) => candidate.id === state.activeGroupId);
+    return `${state.activeGroupId}:${group?.activeTabId ?? ''}`;
+  }
+  function applyActivation(next: SessionState) {
+    if (activeLocation(next) === activeLocation(session)) applySession(next);
+    else checkpoint(next);
+  }
+  function newTab() { applyActivation(addTab(session, createTab())); }
   function closeTabById(tabId: string) {
     const tab = session.tabs.find((candidate) => candidate.id === tabId);
     if (!tab) return;
-    persist(closeTab(session, tabId));
+    applyActivation(closeTab(session, tabId));
     showNotice(t('tabClosed', { name: tab.title }));
   }
   function closeActive() { if (activeTab) closeTabById(activeTab.id); }
@@ -64,12 +79,12 @@
     const tab = session.tabs.find((candidate) => candidate.id === tabId);
     if (!tab) return;
     const title = window.prompt(t('renameTab'), tab.title)?.trim();
-    if (title) persist(updateTab(session, tabId, { title, manuallyNamed: true }));
+    if (title) applySession(updateTab(session, tabId, { title, manuallyNamed: true }));
   }
   function restoreClosed() {
     const slot = session.undoSlots[0];
     if (!slot) { showNotice(t('nothingToRestore')); return; }
-    persist(restoreLatest(session));
+    applyActivation(restoreLatest(session));
     showNotice(t(slot.reason === 'expired' ? 'tabRestoredExpired' : 'tabRestored', { name: slot.tab.title }));
   }
   function showNotice(message: string) {
@@ -93,19 +108,19 @@
   function editContentFor(tabId: string, content: string) {
     const tab = session.tabs.find((candidate) => candidate.id === tabId);
     const language = tab?.kind === 'temporary' && !tab.languageManuallySelected ? detectLanguage(content) : tab?.language;
-    updateEphemeral(touchTab(updateTab(session, tabId, { content, ...(language ? { language } : {}) }), tabId));
+    applySession(touchTab(updateTab(session, tabId, { content, ...(language ? { language } : {}) }), tabId));
   }
   function editContent(content: string) { if (activeTab) editContentFor(activeTab.id, content); }
-  function editStateFor(tabId: string, editor: EditorSnapshot) { updateEphemeral(updateTab(session, tabId, { editor })); }
+  function editStateFor(tabId: string, editor: EditorSnapshot) { applySession(updateTab(session, tabId, { editor })); }
   async function saveActive() {
     if (!activeTab) return;
     const path = activeTab.filePath ?? await save({ defaultPath: `${activeTab.title.replace(/[^\w.-]+/g, '-')}.txt`, filters: [{ name: t('textFiles'), extensions: ['txt', 'md', 'json', 'js', 'ts', 'rs', 'py'] }] });
     if (!path) return;
-    try { await invoke('save_file', { path, content: activeTab.content, encoding: activeTab.encoding ?? 'utf-8', line_ending: activeTab.lineEnding ?? '\n' }); persist(updateTab(session, activeTab.id, { filePath: path, kind: 'file', title: path.split('/').at(-1) ?? activeTab.title, manuallyNamed: true, dirty: false })); showNotice(t('fileSaved', { name: path.split('/').at(-1) ?? t('unnamedFile') })); }
+    try { await invoke('save_file', { path, content: activeTab.content, encoding: activeTab.encoding ?? 'utf-8', line_ending: activeTab.lineEnding ?? '\n' }); applySession(updateTab(session, activeTab.id, { filePath: path, kind: 'file', title: path.split('/').at(-1) ?? activeTab.title, manuallyNamed: true, dirty: false })); showNotice(t('fileSaved', { name: path.split('/').at(-1) ?? t('unnamedFile') })); }
     catch (error) { window.alert(`${t('saveFailed')}${String(error)}`); }
   }
-  async function togglePinned() { pinned = !pinned; persist({ ...session, settings: { ...session.settings, pinned } }); await invoke('set_panel_pinned', { pinned }); }
-  function setShortcutProfile(event: Event) { const value = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['shortcutProfile']; persist({ ...session, settings: { ...session.settings, shortcutProfile: value } }); }
+  async function togglePinned() { pinned = !pinned; updateSettings({ ...session.settings, pinned }); await invoke('set_panel_pinned', { pinned }); }
+  function setShortcutProfile(event: Event) { const value = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['shortcutProfile']; updateSettings({ ...session.settings, shortcutProfile: value }); }
   function normalizedShortcutBinding(binding: string): string {
     const aliases: Record<string, string> = { command: 'cmd', meta: 'cmd', cmdorctrl: 'cmd', control: 'ctrl', option: 'alt' };
     const modifierOrder = ['cmd', 'ctrl', 'alt', 'shift'];
@@ -114,19 +129,19 @@
     const modifiers = parts.slice(0, -1).sort((first, second) => modifierOrder.indexOf(first) - modifierOrder.indexOf(second));
     return [...modifiers, key].join('+');
   }
-  function setShortcutOverride(command: EditorCommand, event: Event) { const raw = (event.currentTarget as HTMLInputElement).value; const value = validateShortcut(raw); const shortcutOverrides = { ...session.settings.shortcutOverrides }; if (raw.trim() && !value) { showNotice(t('invalidShortcut')); (event.currentTarget as HTMLInputElement).value = shortcutOverrides[command] ?? ''; return; } if (value && Object.entries(shortcutOverrides).some(([id, binding]) => id !== command && normalizedShortcutBinding(binding) === normalizedShortcutBinding(value))) { showNotice(t('shortcutConflict')); (event.currentTarget as HTMLInputElement).value = shortcutOverrides[command] ?? ''; return; } if (value) shortcutOverrides[command] = value; else delete shortcutOverrides[command]; persist({ ...session, settings: { ...session.settings, shortcutOverrides } }); }
-  function setPreserveOnRestart(event: Event) { const preserve = (event.currentTarget as HTMLInputElement).checked; const next = { ...session, settings: { ...session.settings, preserveOnRestart: preserve } }; session = next; persistSettings(next.settings); if (preserve) localStorage.setItem(SESSION_KEY, serializeSession(next)); else localStorage.removeItem(SESSION_KEY); }
-  async function setMenuBarIcon(event: Event) { const visible = (event.currentTarget as HTMLInputElement).checked; persist({ ...session, settings: { ...session.settings, showMenuBarIcon: visible } }); await invoke('set_menu_bar_icon_visible', { visible }); }
+  function setShortcutOverride(command: EditorCommand, event: Event) { const raw = (event.currentTarget as HTMLInputElement).value; const value = validateShortcut(raw); const shortcutOverrides = { ...session.settings.shortcutOverrides }; if (raw.trim() && !value) { showNotice(t('invalidShortcut')); (event.currentTarget as HTMLInputElement).value = shortcutOverrides[command] ?? ''; return; } if (value && Object.entries(shortcutOverrides).some(([id, binding]) => id !== command && normalizedShortcutBinding(binding) === normalizedShortcutBinding(value))) { showNotice(t('shortcutConflict')); (event.currentTarget as HTMLInputElement).value = shortcutOverrides[command] ?? ''; return; } if (value) shortcutOverrides[command] = value; else delete shortcutOverrides[command]; updateSettings({ ...session.settings, shortcutOverrides }); }
+  function setPreserveOnRestart(event: Event) { updateSettings({ ...session.settings, preserveOnRestart: (event.currentTarget as HTMLInputElement).checked }); }
+  async function setMenuBarIcon(event: Event) { const visible = (event.currentTarget as HTMLInputElement).checked; updateSettings({ ...session.settings, showMenuBarIcon: visible }); await invoke('set_menu_bar_icon_visible', { visible }); }
   async function setDockIcon(event: Event) {
     const visible = (event.currentTarget as HTMLInputElement).checked;
-    try { await invoke('set_dock_icon_visible', { visible }); persist({ ...session, settings: { ...session.settings, showDockIcon: visible } }); }
+    try { await invoke('set_dock_icon_visible', { visible }); updateSettings({ ...session.settings, showDockIcon: visible }); }
     catch (error) { (event.currentTarget as HTMLInputElement).checked = false; showNotice(`${t('dockSettingFailed')}${String(error)}`); }
   }
   async function setLaunchAtLogin(event: Event) {
     const enabled = (event.currentTarget as HTMLInputElement).checked;
     try {
       if (enabled) await enableAutostart(); else await disableAutostart();
-      persist({ ...session, settings: { ...session.settings, launchAtLogin: enabled } });
+      updateSettings({ ...session.settings, launchAtLogin: enabled });
     } catch (error) {
       (event.currentTarget as HTMLInputElement).checked = false;
       showNotice(`${t('loginSettingFailed')}${String(error)}`);
@@ -134,21 +149,21 @@
   }
   async function setEdgeModifier(event: Event) {
     const modifier = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['edgeModifier'];
-    persist({ ...session, settings: { ...session.settings, edgeModifier: modifier } });
+    updateSettings({ ...session.settings, edgeModifier: modifier });
     try { await invoke('set_edge_modifier', { modifier }); showNotice(t('modifierChanged', { modifier })); }
     catch { showNotice(t('nativeTriggerUnavailable')); }
   }
   function setTabLayout(event: Event) {
     const tabLayout = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['tabLayout'];
-    persist({ ...session, settings: { ...session.settings, tabLayout } });
+    updateSettings({ ...session.settings, tabLayout });
   }
   function setTopTabBehavior(event: Event) {
     const topTabBehavior = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['topTabBehavior'];
-    persist({ ...session, settings: { ...session.settings, topTabBehavior } });
+    updateSettings({ ...session.settings, topTabBehavior });
   }
   function setLanguage(tabId: string, event: Event) {
     const language = (event.currentTarget as HTMLSelectElement).value;
-    persist(updateTab(session, tabId, { language, languageManuallySelected: true }));
+    applySession(updateTab(session, tabId, { language, languageManuallySelected: true }));
   }
   async function setEdgeOptions() {
     try { await invoke('set_edge_trigger_options', { leftEnabled: session.settings.leftEdgeEnabled, rightEnabled: session.settings.rightEdgeEnabled, dwellMs: session.settings.edgeDwellMs }); }
@@ -156,12 +171,12 @@
   }
   function updateEdgeOption(key: 'leftEdgeEnabled' | 'rightEdgeEnabled' | 'edgeDwellMs', value: boolean | number) {
     const settings = { ...session.settings, [key]: value };
-    persist({ ...session, settings });
+    updateSettings(settings);
     void setEdgeOptions();
   }
   async function setAnimationOption(key: 'panelAnimationEnabled' | 'panelAnimationDurationMs', value: boolean | number) {
     const settings = { ...session.settings, [key]: value };
-    persist({ ...session, settings });
+    updateSettings(settings);
     try { await invoke('set_panel_animation', { enabled: settings.panelAnimationEnabled, durationMs: settings.panelAnimationDurationMs }); }
     catch (error) { showNotice(String(error)); }
   }
@@ -171,15 +186,16 @@
       if (!update) { showNotice(t('noUpdates')); return; }
       if (!window.confirm(t('updateFound', { version: update.version }))) return;
       await update.downloadAndInstall();
+      checkpoint(session);
       await relaunch();
     } catch (error) { showNotice(`${t('updateFailed')}${String(error)}`); }
   }
-  function changeFontSize(delta: number) { persist({ ...session, settings: { ...session.settings, fontSize: Math.max(10, Math.min(32, session.settings.fontSize + delta)) } }); }
+  function changeFontSize(delta: number) { updateSettings({ ...session.settings, fontSize: Math.max(10, Math.min(32, session.settings.fontSize + delta)) }); }
   function setEditorVisibility(key: 'showLineNumbers' | 'showMinimap' | 'showFolding' | 'showGlyphMargin', event: Event) {
-    persist({ ...session, settings: { ...session.settings, [key]: (event.currentTarget as HTMLInputElement).checked } });
+    updateSettings({ ...session.settings, [key]: (event.currentTarget as HTMLInputElement).checked });
   }
   function setDisplayVisibility(key: 'showTabs' | 'showBreadcrumbs' | 'showStatusBar', event: Event) {
-    persist({ ...session, settings: { ...session.settings, [key]: (event.currentTarget as HTMLInputElement).checked } });
+    updateSettings({ ...session.settings, [key]: (event.currentTarget as HTMLInputElement).checked });
   }
   function openSettings() { overlayOrigin = document.activeElement as HTMLElement | null; showSettings = true; window.setTimeout(() => settingsCloseButton?.focus(), 0); }
   function closeSettings() { showSettings = false; overlayOrigin?.focus(); overlayOrigin = null; }
@@ -212,18 +228,19 @@
       return results;
     });
   }
-  function focusSearchResult(tabId: string) { persist(focusTab(session, tabId)); closeSearch(); }
+  function focusSearchResult(tabId: string) { applyActivation(focusTab(session, tabId)); closeSearch(); }
   async function refreshPreview(tab: SessionTab) {
     if (!tab.filePath || tab.kind !== 'preview') return;
     try {
       const preview = await invoke<{ path: string; data_url: string; mime: string }>('preview_file', { path: tab.filePath });
-      persist(updateTab(session, tab.id, { content: preview.data_url, previewDataUrl: preview.data_url, previewMime: preview.mime }));
+      applySession(updateTab(session, tab.id, { content: preview.data_url, previewDataUrl: preview.data_url, previewMime: preview.mime }));
       showNotice(t('previewRefreshed', { name: tab.title }));
     } catch (error) { showNotice(`${t('refreshFailed')}${String(error)}`); }
   }
   function clearWorkspace() {
     if (!window.confirm(t('clearConfirm'))) return;
-    persist({ ...createSessionState(), settings: session.settings });
+    applySession({ ...createSessionState(), settings: session.settings });
+    clearSessionCheckpoint(localStorage);
     showNotice(t('workspaceCleared'));
   }
   async function resetSettings() {
@@ -231,7 +248,7 @@
     const settings = { ...DEFAULT_SESSION_SETTINGS, shortcutOverrides: {} };
     pinned = false;
     try { await disableAutostart(); } catch { /* autostart may be unavailable outside the packaged app */ }
-    persist({ ...session, settings });
+    updateSettings(settings);
     await Promise.allSettled([
       invoke('set_menu_bar_icon_visible', { visible: settings.showMenuBarIcon }),
       invoke('set_dock_icon_visible', { visible: settings.showDockIcon }),
@@ -243,17 +260,17 @@
   function addSplit() {
     if (session.groups.length >= 2) { showNotice(t('splitLimit')); return; }
     const next = createGroup(session, 'vertical');
-    persist(addTab(next, createTab(), next.activeGroupId));
+    applyActivation(addTab(next, createTab(), next.activeGroupId));
   }
   function splitOrientation(): 'horizontal' | 'vertical' { return session.groups.find((group) => group.parentId)?.orientation ?? 'vertical'; }
   function toggleSplitOrientation() {
     if (session.groups.length < 2) return;
     const orientation = splitOrientation() === 'vertical' ? 'horizontal' : 'vertical';
-    persist({ ...session, groups: session.groups.map((group) => group.parentId ? { ...group, orientation } : group) });
+    applySession({ ...session, groups: session.groups.map((group) => group.parentId ? { ...group, orientation } : group) });
   }
   function closeSplit() {
     if (session.groups.length <= 1) { showNotice(t('oneGroupOnly')); return; }
-    persist(removeGroup(session, session.activeGroupId));
+    applyActivation(removeGroup(session, session.activeGroupId));
   }
   function startTabDrag(tabId: string, event: DragEvent) {
     draggedTabId = tabId;
@@ -263,7 +280,7 @@
   function dropTabInGroup(groupId: string, event: DragEvent) {
     event.preventDefault();
     const tabId = event.dataTransfer?.getData('text/plain') || draggedTabId;
-    if (tabId) persist(moveTabToGroup(session, tabId, groupId));
+    if (tabId) applyActivation(moveTabToGroup(session, tabId, groupId));
     draggedTabId = '';
   }
   function groupTab(group: EditorGroup) { return session.tabs.find((tab) => tab.id === group.activeTabId); }
@@ -271,7 +288,7 @@
   function setSplitRatio(event: Event) {
     const group = session.groups.find((candidate) => candidate.parentId);
     if (!group) return;
-    persist(setGroupRatio(session, group.id, Number((event.currentTarget as HTMLInputElement).value)));
+    applySession(setGroupRatio(session, group.id, Number((event.currentTarget as HTMLInputElement).value)));
   }
   function groupStyle(index: number) {
     if (session.groups.length !== 2) return '';
@@ -281,7 +298,7 @@
   function isPreviewPath(path: string) { return /\.(png|jpe?g|gif|webp|pdf)$/i.test(path); }
   async function addPreviewPath(path: string, title?: string) {
     const preview = await invoke<{ path: string; data_url: string; mime: string }>('preview_file', { path });
-    persist(addTab(session, createTab({ kind: 'preview', filePath: preview.path, content: preview.data_url, language: 'preview', title: title ?? path.split('/').at(-1), readOnly: true, previewDataUrl: preview.data_url, previewMime: preview.mime })));
+    applyActivation(addTab(session, createTab({ kind: 'preview', filePath: preview.path, content: preview.data_url, language: 'preview', title: title ?? path.split('/').at(-1), readOnly: true, previewDataUrl: preview.data_url, previewMime: preview.mime })));
   }
   async function rehydratePreviews() {
     const previews = session.tabs.filter((tab) => tab.kind === 'preview' && tab.filePath).map((tab) => ({ id: tab.id, path: tab.filePath as string, title: tab.title }));
@@ -289,13 +306,12 @@
       try {
         const preview = await invoke<{ path: string; data_url: string; mime: string }>('preview_file', { path: previewTab.path });
         const current = session.tabs.find((tab) => tab.id === previewTab.id);
-        if (current?.kind === 'preview' && current.filePath === previewTab.path) updateEphemeral(updateTab(session, previewTab.id, { content: preview.data_url, previewDataUrl: preview.data_url, previewMime: preview.mime, readOnly: true }));
+        if (current?.kind === 'preview' && current.filePath === previewTab.path) applySession(updateTab(session, previewTab.id, { content: preview.data_url, previewDataUrl: preview.data_url, previewMime: preview.mime, readOnly: true }));
       } catch {
-        if (session.tabs.some((tab) => tab.id === previewTab.id)) updateEphemeral(closeTab(session, previewTab.id, Date.now(), 'closed'));
+        if (session.tabs.some((tab) => tab.id === previewTab.id)) applySession(closeTab(session, previewTab.id, Date.now(), 'closed'));
         showNotice(t('previewRestoreFailed', { name: previewTab.title }));
       }
     }
-    persist(session);
   }
   async function rehydrateFileBindings() {
     const files = session.tabs.filter((tab) => tab.kind === 'file' && tab.filePath).map((tab) => ({ id: tab.id, path: tab.filePath as string, title: tab.title }));
@@ -305,11 +321,10 @@
       } catch {
         const current = session.tabs.find((tab) => tab.id === file.id);
         if (current?.kind !== 'file' || current.filePath !== file.path) continue;
-        updateEphemeral(updateTab(session, file.id, { kind: 'temporary', filePath: undefined, encoding: undefined, lineEnding: undefined, dirty: false }));
+        applySession(updateTab(session, file.id, { kind: 'temporary', filePath: undefined, encoding: undefined, lineEnding: undefined, dirty: false }));
         showNotice(t('filePathInvalid', { name: file.title }));
       }
     }
-    persist(session);
   }
   async function openPath(path: string, title?: string) {
     if (isPreviewPath(path)) {
@@ -318,7 +333,7 @@
     }
     try {
       const opened = await invoke<{ path: string; content: string; language: string; encoding: string; line_ending: '\n' | '\r\n' | '\r' }>('open_text_file', { path });
-      persist(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, encoding: opened.encoding, lineEnding: opened.line_ending, title: title ?? path.split('/').at(-1) })));
+      applyActivation(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, encoding: opened.encoding, lineEnding: opened.line_ending, title: title ?? path.split('/').at(-1) })));
     } catch (textError) {
       try { await addPreviewPath(path, title); } catch { window.alert(`${t('unsupportedOpen')}${String(textError)}`); }
     }
@@ -369,9 +384,20 @@
     event.preventDefault();
     for (const path of paths) await openPath(path);
   }
+  async function requestQuit() {
+    if (quitInProgress) return;
+    quitInProgress = true;
+    checkpoint(session);
+    try {
+      await invoke('quit_app');
+    } catch (error) {
+      quitInProgress = false;
+      showNotice(String(error));
+    }
+  }
   onMount(() => {
     const storedSettings = deserializeSettings(localStorage.getItem(SETTINGS_KEY) ?? '');
-    const saved = deserializeSession(localStorage.getItem(SESSION_KEY) ?? '');
+    const saved = readSessionCheckpoint(localStorage.getItem(SESSION_KEY) ?? '');
     const settings = { ...(storedSettings ?? saved?.settings ?? session.settings), pinned: false };
     const restoredBase = saved && settings.preserveOnRestart ? { ...saved, settings } : { ...session, settings };
     const expiredOnStartup = expireTabs(restoredBase);
@@ -379,13 +405,12 @@
       ? expiredOnStartup.state
       : addTab(expiredOnStartup.state, createTab());
     const restoredActiveTabId = restored.groups.find((group) => group.id === restored.activeGroupId)?.activeTabId;
-    session = restoredActiveTabId ? focusTab(restored, restoredActiveTabId) : restored;
-    persist(session);
+    applySession(restoredActiveTabId ? focusTab(restored, restoredActiveTabId) : restored);
     void rehydratePreviews();
     void rehydrateFileBindings();
     pinned = session.settings.pinned;
     void isAutostartEnabled().then((autostartEnabled) => {
-      if (autostartEnabled !== session.settings.launchAtLogin) persist({ ...session, settings: { ...session.settings, launchAtLogin: autostartEnabled } });
+      if (autostartEnabled !== session.settings.launchAtLogin) updateSettings({ ...session.settings, launchAtLogin: autostartEnabled });
     }).catch(() => { /* autostart is unavailable outside a packaged desktop runtime */ });
     void invoke('set_menu_bar_icon_visible', { visible: session.settings.showMenuBarIcon });
     void invoke('set_dock_icon_visible', { visible: session.settings.showDockIcon });
@@ -393,7 +418,7 @@
     void invoke('set_edge_modifier', { modifier: session.settings.edgeModifier });
     void setEdgeOptions();
     void invoke('set_panel_animation', { enabled: session.settings.panelAnimationEnabled, durationMs: session.settings.panelAnimationDurationMs });
-    expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) { persist(result.state); showNotice(t('tabsExpired', { count: result.expired.length })); } }, 60_000);
+    expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) { applySession(result.state); showNotice(t('tabsExpired', { count: result.expired.length })); } }, 60_000);
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'p') { if (!status.visible) return; event.preventDefault(); openCommands(); return; }
       if (event.key === 'Escape' && showSearch) { event.preventDefault(); closeSearch(); return; }
@@ -405,11 +430,11 @@
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void saveActive(); }
       if ((event.metaKey || event.ctrlKey) && (event.key === '+' || event.key === '=')) { event.preventDefault(); changeFontSize(1); }
       if ((event.metaKey || event.ctrlKey) && event.key === '-') { event.preventDefault(); changeFontSize(-1); }
-      if ((event.metaKey || event.ctrlKey) && event.key === '0') { event.preventDefault(); persist({ ...session, settings: { ...session.settings, fontSize: 14 } }); }
+      if ((event.metaKey || event.ctrlKey) && event.key === '0') { event.preventDefault(); updateSettings({ ...session.settings, fontSize: 14 }); }
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 'n') { event.preventDefault(); newTab(); }
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 'w') { event.preventDefault(); closeActive(); }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 't') { event.preventDefault(); restoreClosed(); }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'q') { event.preventDefault(); persist(session); void invoke('quit_app'); }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'q') { event.preventDefault(); void requestQuit(); }
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'f') { event.preventDefault(); openSearch(); }
       if ((event.metaKey || event.ctrlKey) && event.key === ',') { event.preventDefault(); openSettings(); }
     };
@@ -423,13 +448,18 @@
     window.addEventListener('blur', onWindowBlur);
     window.addEventListener('focus', onWindowFocus);
     void (async () => {
-      unlisten = await listenPanelStatus((next) => { if (status.visible && !next.visible) persist(session); status = next; });
+      unlisten = await listenPanelStatus((next) => {
+        if (panelStatusInitialized && status.visible && !next.visible) checkpoint(session);
+        status = next;
+        panelStatusInitialized = true;
+      });
       unlistenPaths = await listen<string[]>('open_paths', (event) => { for (const path of event.payload) void openPath(path); });
+      unlistenQuit = await listen('quit_requested', () => { void requestQuit(); });
       const initialPaths = await invoke<string[]>('startup_paths');
       for (const path of initialPaths) await openPath(path);
       if (initialPaths.length > 0) await panelAction('show');
     })();
-    return () => { persist(session); unlisten?.(); unlistenPaths?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); window.removeEventListener('paste', openPastedFiles); window.removeEventListener('blur', onWindowBlur); window.removeEventListener('focus', onWindowFocus); };
+    return () => { unlisten?.(); unlistenPaths?.(); unlistenQuit?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); window.removeEventListener('paste', openPastedFiles); window.removeEventListener('blur', onWindowBlur); window.removeEventListener('focus', onWindowFocus); };
   });
 </script>
 <svelte:head><title>{t('appTitle')}</title></svelte:head>
@@ -451,7 +481,7 @@
   {#if session.settings.showTabs}<nav class="tabs" class:compressed-tabs={session.settings.tabLayout === 'top' && session.settings.topTabBehavior === 'compress'} aria-label={t('tabsAria')}>
     {#each session.tabs as tab (tab.id)}
       <div class:active={tab.id === activeTab?.id} class="tab-wrap">
-        <button class="tab" draggable="true" ondragstart={(event) => startTabDrag(tab.id, event)} onclick={() => persist(focusTab(session, tab.id))} ondblclick={(event) => { event.stopPropagation(); renameTab(tab.id); }} title={`${tab.filePath ?? tab.title}${t('tabDragHint')}`}>{tab.dirty ? '● ' : ''}{tab.title}{tab.kind === 'preview' ? ` · ${t('previewSuffix')}` : ''}</button>
+        <button class="tab" draggable="true" ondragstart={(event) => startTabDrag(tab.id, event)} onclick={() => applyActivation(focusTab(session, tab.id))} ondblclick={(event) => { event.stopPropagation(); renameTab(tab.id); }} title={`${tab.filePath ?? tab.title}${t('tabDragHint')}`}>{tab.dirty ? '● ' : ''}{tab.title}{tab.kind === 'preview' ? ` · ${t('previewSuffix')}` : ''}</button>
         <button class="tab-close" aria-label={t('closeTabAria', { name: tab.title })} onclick={(event) => { event.stopPropagation(); closeTabById(tab.id); }}>×</button>
       </div>
     {/each}
@@ -461,10 +491,10 @@
   <section class:split-workspace={session.groups.length > 1} class:split-horizontal={splitOrientation() === 'horizontal'} class="workspace" aria-label={t('workspaceAria')}>
     {#each session.groups as group (group.id)}
       {@const tab = groupTab(group)}
-      <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={t('groupAria', { id: group.id })} onpointerdown={() => { if (tab) updateEphemeral(focusTab(session, tab.id)); }} onfocusin={() => { if (tab) updateEphemeral(focusTab(session, tab.id)); }} ondragover={(event) => event.preventDefault()} ondrop={(event) => dropTabInGroup(group.id, event)}>
+      <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={t('groupAria', { id: group.id })} onpointerdown={() => { if (tab) applyActivation(focusTab(session, tab.id)); }} onfocusin={() => { if (tab) applyActivation(focusTab(session, tab.id)); }} ondragover={(event) => event.preventDefault()} ondrop={(event) => dropTabInGroup(group.id, event)}>
         {#if tab}
           {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} onRefresh={() => refreshPreview(tab)} />{:else}<div class="editor-stack">{#if session.settings.showBreadcrumbs}<div class="breadcrumbs" title={tab.filePath ?? tab.title}>{tab.filePath ? tab.filePath.split('/').filter(Boolean).join(' › ') : tab.title}</div>{/if}{#key `${tab.id}:${tab.language}:${session.settings.fontSize}:${session.settings.shortcutProfile}:${shortcutOverridesFingerprint(session.settings.shortcutOverrides)}:${session.settings.showLineNumbers}:${session.settings.showMinimap}:${session.settings.showFolding}:${session.settings.showGlyphMargin}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} editorVisibility={{ showLineNumbers: session.settings.showLineNumbers, showMinimap: session.settings.showMinimap, showFolding: session.settings.showFolding, showGlyphMargin: session.settings.showGlyphMargin }} onChange={(content) => editContentFor(tab.id, content)} onStateChange={(editor) => editStateFor(tab.id, editor)} />{/key}{#if session.settings.showStatusBar}<div class="editor-status"><span>{tab.encoding?.toUpperCase() ?? 'UTF-8'} · {tab.lineEnding === '\r\n' ? 'CRLF' : tab.lineEnding === '\r' ? 'CR' : 'LF'}</span><label>{t('languageMode')}<select aria-label={t('languageMode')} value={tab.language} onchange={(event) => setLanguage(tab.id, event)}>{#each languageOptions as language}<option value={language}>{language}</option>{/each}</select></label></div>{/if}</div>{/if}
-        {:else}<button class="empty" onclick={() => { const next = addTab(session, createTab(), group.id); persist(next); }}>{t('newGroupTab')}</button>{/if}
+        {:else}<button class="empty" onclick={() => { const next = addTab(session, createTab(), group.id); applyActivation(next); }}>{t('newGroupTab')}</button>{/if}
       </section>
     {/each}
   </section>
