@@ -142,7 +142,7 @@
     showNotice(t('workspaceCleared'));
   }
   async function resetSettings() {
-    if (!window.confirm('恢复所有设置为默认值？标签内容和真实文件不会被删除。')) return;
+    if (!window.confirm(t('resetConfirm'))) return;
     const settings = { ...DEFAULT_SESSION_SETTINGS, shortcutOverrides: {} };
     pinned = false;
     try { await disableAutostart(); } catch { /* autostart may be unavailable outside the packaged app */ }
@@ -153,7 +153,7 @@
       invoke('set_panel_pinned', { pinned: false }),
       invoke('set_edge_modifier', { modifier: settings.edgeModifier })
     ]);
-    showNotice('设置已恢复为默认值');
+    showNotice(t('settingsReset'));
   }
   function addSplit() {
     if (session.groups.length >= 2) { showNotice(t('splitLimit')); return; }
@@ -221,7 +221,7 @@
         const current = session.tabs.find((tab) => tab.id === file.id);
         if (current?.kind !== 'file' || current.filePath !== file.path) continue;
         updateEphemeral(updateTab(session, file.id, { kind: 'temporary', filePath: undefined, encoding: undefined, lineEnding: undefined, dirty: false }));
-        showNotice(`${file.title} 的原路径已失效，已转为临时标签`);
+        showNotice(t('filePathInvalid', { name: file.title }));
       }
     }
     persist(session);
@@ -309,51 +309,51 @@
     return () => { persist(session); unlisten?.(); unlistenPaths?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); };
   });
 </script>
-<svelte:head><title>Edgedor</title></svelte:head>
+<svelte:head><title>{t('appTitle')}</title></svelte:head>
   <main class="shell" class:side-tabs={session.settings.tabLayout !== 'top'} class:side-tabs-right={session.settings.tabLayout === 'right'}>
   <ToolbarMount />
-  <header class="toolbar" aria-label="工作台工具栏">
-    <button onclick={newTab} title="新建临时标签">＋ 新建</button>
-    <button onclick={openTextFile}>打开文件</button>
-    <button onclick={openPreviewFile}>预览文件</button>
-    <button onclick={saveActive} disabled={!activeTab || activeTab.kind === 'preview'} title="保存当前标签（⌘S）">保存{activeTab?.dirty ? ' ·' : ''}</button>
-    <button onclick={addSplit} disabled={session.groups.length >= 2} title="新建编辑分区（最多两个）">分区</button>
-    {#if session.groups.length > 1}<button onclick={toggleSplitOrientation} title="切换分区方向">{splitOrientation() === 'vertical' ? '上下分区' : '左右分区'}</button>{/if}
-    <button onclick={closeSplit} disabled={session.groups.length <= 1} title="合并当前编辑分区">合并</button>
+  <header class="toolbar" aria-label={t('toolbarAria')}>
+    <button onclick={newTab} title={t('newTab')}>＋ {t('new')}</button>
+    <button onclick={openTextFile}>{t('openFile')}</button>
+    <button onclick={openPreviewFile}>{t('previewFile')}</button>
+    <button onclick={saveActive} disabled={!activeTab || activeTab.kind === 'preview'} title={t('saveActiveTitle')}>{t('save')}{activeTab?.dirty ? ' ·' : ''}</button>
+    <button onclick={addSplit} disabled={session.groups.length >= 2} title={t('addSplitTitle')}>{t('split')}</button>
+    {#if session.groups.length > 1}<button onclick={toggleSplitOrientation} title={t('toggleSplitTitle')}>{splitOrientation() === 'vertical' ? t('splitHorizontal') : t('splitVertical')}</button>{/if}
+    <button onclick={closeSplit} disabled={session.groups.length <= 1} title={t('mergeTitle')}>{t('merge')}</button>
     <span class="toolbar-spacer"></span>
-    <button onclick={openSearch} title="跨标签查找（⌘⇧F）">查找</button>
-    <button onclick={openSettings} aria-haspopup="dialog">设置</button>
-    <button class="pin" aria-pressed={pinned} onclick={togglePinned}>{pinned ? '取消固定' : '固定面板'}</button>
+    <button onclick={openSearch} title={t('searchTitle')}>{t('search')}</button>
+    <button onclick={openSettings} aria-haspopup="dialog">{t('settings')}</button>
+    <button class="pin" aria-pressed={pinned} onclick={togglePinned}>{pinned ? t('unpin') : t('pin')}</button>
   </header>
-  <nav class="tabs" aria-label="编辑标签">
+  <nav class="tabs" aria-label={t('tabsAria')}>
     {#each session.tabs as tab (tab.id)}
       <div class:active={tab.id === activeTab?.id} class="tab-wrap">
-        <button class="tab" draggable="true" ondragstart={(event) => startTabDrag(tab.id, event)} onclick={() => persist(focusTab(session, tab.id))} ondblclick={(event) => { event.stopPropagation(); renameTab(tab.id); }} title={`${tab.filePath ?? tab.title}（双击重命名，可拖到其他分区）`}>{tab.dirty ? '● ' : ''}{tab.title}{tab.kind === 'preview' ? ' · 预览' : ''}</button>
-        <button class="tab-close" aria-label={`关闭 ${tab.title}`} onclick={(event) => { event.stopPropagation(); closeTabById(tab.id); }}>×</button>
+        <button class="tab" draggable="true" ondragstart={(event) => startTabDrag(tab.id, event)} onclick={() => persist(focusTab(session, tab.id))} ondblclick={(event) => { event.stopPropagation(); renameTab(tab.id); }} title={`${tab.filePath ?? tab.title}${t('tabDragHint')}`}>{tab.dirty ? '● ' : ''}{tab.title}{tab.kind === 'preview' ? ` · ${t('previewSuffix')}` : ''}</button>
+        <button class="tab-close" aria-label={t('closeTabAria', { name: tab.title })} onclick={(event) => { event.stopPropagation(); closeTabById(tab.id); }}>×</button>
       </div>
     {/each}
-    {#if session.tabs.length === 0}<button class="empty-tab" onclick={newTab}>新建临时标签</button>{/if}
-    <button class="restore" onclick={restoreClosed} disabled={session.undoSlots.length === 0} title={session.undoSlots[0] ? `${session.undoSlots[0].tab.title} · ${session.undoSlots[0].reason === 'expired' ? '超时' : '关闭'}` : '没有撤销记录'}>撤销关闭{session.undoSlots.length ? ` (${session.undoSlots.length})` : ''}</button>
+    {#if session.tabs.length === 0}<button class="empty-tab" onclick={newTab}>{t('newTab')}</button>{/if}
+    <button class="restore" onclick={restoreClosed} disabled={session.undoSlots.length === 0} title={session.undoSlots[0] ? `${session.undoSlots[0].tab.title} · ${session.undoSlots[0].reason === 'expired' ? t('expired') : t('closed')}` : t('noUndo')}>{t('restoreClosed')}{session.undoSlots.length ? ` (${session.undoSlots.length})` : ''}</button>
   </nav>
-  <section class:split-workspace={session.groups.length > 1} class:split-horizontal={splitOrientation() === 'horizontal'} class="workspace" aria-label="临时编辑区">
+  <section class:split-workspace={session.groups.length > 1} class:split-horizontal={splitOrientation() === 'horizontal'} class="workspace" aria-label={t('workspaceAria')}>
     {#each session.groups as group (group.id)}
       {@const tab = groupTab(group)}
-      <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={`编辑分区 ${group.id}`} onpointerdown={() => { if (tab) updateEphemeral(focusTab(session, tab.id)); }} onfocusin={() => { if (tab) updateEphemeral(focusTab(session, tab.id)); }} ondragover={(event) => event.preventDefault()} ondrop={(event) => dropTabInGroup(group.id, event)}>
+      <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={t('groupAria', { id: group.id })} onpointerdown={() => { if (tab) updateEphemeral(focusTab(session, tab.id)); }} onfocusin={() => { if (tab) updateEphemeral(focusTab(session, tab.id)); }} ondragover={(event) => event.preventDefault()} ondrop={(event) => dropTabInGroup(group.id, event)}>
         {#if tab}
           {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} onRefresh={() => refreshPreview(tab)} />{:else}{#key `${tab.id}:${session.settings.fontSize}:${session.settings.shortcutProfile}:${session.settings.showLineNumbers}:${session.settings.showMinimap}:${session.settings.showFolding}:${session.settings.showGlyphMargin}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} editorVisibility={{ showLineNumbers: session.settings.showLineNumbers, showMinimap: session.settings.showMinimap, showFolding: session.settings.showFolding, showGlyphMargin: session.settings.showGlyphMargin }} onChange={(content) => editContentFor(tab.id, content)} onStateChange={(editor) => editStateFor(tab.id, editor)} />{/key}{/if}
-        {:else}<button class="empty" onclick={() => { const next = addTab(session, createTab(), group.id); persist(next); }}>新建分区标签</button>{/if}
+        {:else}<button class="empty" onclick={() => { const next = addTab(session, createTab(), group.id); persist(next); }}>{t('newGroupTab')}</button>{/if}
       </section>
     {/each}
   </section>
   {#if notice}<div class="notice" role="status">{notice}</div>{/if}
-  <footer aria-live="polite">{status.bridgeReady ? '原生面板已连接' : '正在连接原生面板…'} · {session.tabs.length} 个标签 · 撤销槽 {session.undoSlots.length}/10</footer>
+  <footer aria-live="polite">{status.bridgeReady ? t('nativeReady') : t('nativeConnecting')} · {t('tabCount', { count: session.tabs.length })} · {t('undoCount', { count: session.undoSlots.length })}</footer>
   {#if showSearch}
     <div class="search-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) closeSearch(); }}>
-      <div class="search-panel" role="dialog" aria-modal="true" aria-label="跨标签查找">
-        <div class="settings-heading"><h2>跨标签查找</h2><button bind:this={searchCloseButton} aria-label="关闭查找" onclick={closeSearch}>×</button></div>
-        <input bind:this={searchInput} bind:value={searchQuery} placeholder="输入要查找的内容" aria-label="查找内容" />
+      <div class="search-panel" role="dialog" aria-modal="true" aria-label={t('crossTabSearch')}>
+        <div class="settings-heading"><h2>{t('crossTabSearch')}</h2><button bind:this={searchCloseButton} aria-label={t('closeSearch')} onclick={closeSearch}>×</button></div>
+        <input bind:this={searchInput} bind:value={searchQuery} placeholder={t('searchPlaceholder')} aria-label={t('searchInputAria')} />
         <div class="search-results">
-          {#if searchQuery.trim() && searchResults().length === 0}<p>没有匹配内容</p>{/if}
+          {#if searchQuery.trim() && searchResults().length === 0}<p>{t('noMatches')}</p>{/if}
           {#each searchResults() as result (result.tab.id)}
             <button class="search-result" onclick={() => focusSearchResult(result.tab.id)}><strong>{result.tab.title}</strong><span>{result.excerpt}</span></button>
           {/each}
@@ -363,28 +363,28 @@
   {/if}
   {#if showSettings}
     <div class="settings-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) closeSettings(); }}>
-      <div class="settings-panel" role="dialog" aria-modal="true" aria-label="Edgedor 设置">
-        <div class="settings-heading"><h2>设置</h2><button bind:this={settingsCloseButton} aria-label="关闭设置" onclick={closeSettings}>×</button></div>
-        <label>编辑器快捷键方案<select aria-label="编辑器快捷键方案" value={session.settings.shortcutProfile} onchange={setShortcutProfile}><option value="vscode">VS Code</option><option value="sublime">Sublime Text</option><option value="jetbrains">JetBrains</option><option value="vim">Vim（编辑区）</option></select></label>
-        <label>边缘呼出修饰键<select aria-label="边缘呼出修饰键" value={session.settings.edgeModifier} onchange={setEdgeModifier}><option value="command">Command（⌘）</option><option value="option">Option（⌥）</option><option value="control">Control（⌃）</option><option value="shift">Shift（⇧）</option></select></label>
-        <label>标签布局<select aria-label="标签布局" value={session.settings.tabLayout} onchange={setTabLayout}><option value="top">顶部横向滚动</option><option value="left">左侧标签</option><option value="right">右侧标签</option></select></label>
-        {#if session.groups.length === 2}<label>分区比例 <input aria-label="分区比例" type="range" min="0.2" max="0.8" step="0.05" value={splitRatio()} oninput={setSplitRatio} /></label>{/if}
-        <fieldset class="shortcut-list"><legend>自定义编辑器快捷键</legend>{#each editorShortcutCommands as shortcut}<label>{shortcut.label}<input aria-label={`${shortcut.label}快捷键`} placeholder="留空使用方案默认值" value={session.settings.shortcutOverrides[shortcut.id] ?? ''} onchange={(event) => setShortcutOverride(shortcut.id, event)} /></label>{/each}</fieldset>
-        <label>编辑器字号 <span class="font-controls"><button onclick={() => changeFontSize(-1)}>−</button><output>{session.settings.fontSize}px</output><button onclick={() => changeFontSize(1)}>＋</button></span></label>
-        <fieldset class="shortcut-list"><legend>编辑器区域</legend>
-          <label class="checkbox"><input type="checkbox" checked={session.settings.showLineNumbers} onchange={(event) => setEditorVisibility('showLineNumbers', event)} />行号</label>
-          <label class="checkbox"><input type="checkbox" checked={session.settings.showMinimap} onchange={(event) => setEditorVisibility('showMinimap', event)} />Minimap</label>
-          <label class="checkbox"><input type="checkbox" checked={session.settings.showFolding} onchange={(event) => setEditorVisibility('showFolding', event)} />代码折叠</label>
-          <label class="checkbox"><input type="checkbox" checked={session.settings.showGlyphMargin} onchange={(event) => setEditorVisibility('showGlyphMargin', event)} />字形边栏</label>
+      <div class="settings-panel" role="dialog" aria-modal="true" aria-label={t('settingsDialog')}>
+        <div class="settings-heading"><h2>{t('settings')}</h2><button bind:this={settingsCloseButton} aria-label={t('closeSettings')} onclick={closeSettings}>×</button></div>
+        <label>{t('shortcutProfile')}<select aria-label={t('shortcutProfile')} value={session.settings.shortcutProfile} onchange={setShortcutProfile}><option value="vscode">VS Code</option><option value="sublime">Sublime Text</option><option value="jetbrains">JetBrains</option><option value="vim">{t('vimEditor')}</option></select></label>
+        <label>{t('edgeModifier')}<select aria-label={t('edgeModifier')} value={session.settings.edgeModifier} onchange={setEdgeModifier}><option value="command">{t('commandKey')}</option><option value="option">{t('optionKey')}</option><option value="control">{t('controlKey')}</option><option value="shift">{t('shiftKey')}</option></select></label>
+        <label>{t('tabLayout')}<select aria-label={t('tabLayout')} value={session.settings.tabLayout} onchange={setTabLayout}><option value="top">{t('tabTop')}</option><option value="left">{t('tabLeft')}</option><option value="right">{t('tabRight')}</option></select></label>
+        {#if session.groups.length === 2}<label>{t('splitRatio')} <input aria-label={t('splitRatio')} type="range" min="0.2" max="0.8" step="0.05" value={splitRatio()} oninput={setSplitRatio} /></label>{/if}
+        <fieldset class="shortcut-list"><legend>{t('customShortcuts')}</legend>{#each editorShortcutCommands as shortcut}<label>{shortcut.label}<input aria-label={t('shortcutAria', { name: shortcut.label })} placeholder={t('shortcutPlaceholder')} value={session.settings.shortcutOverrides[shortcut.id] ?? ''} onchange={(event) => setShortcutOverride(shortcut.id, event)} /></label>{/each}</fieldset>
+        <label>{t('fontSize')} <span class="font-controls"><button onclick={() => changeFontSize(-1)}>−</button><output>{session.settings.fontSize}px</output><button onclick={() => changeFontSize(1)}>＋</button></span></label>
+        <fieldset class="shortcut-list"><legend>{t('editorRegion')}</legend>
+          <label class="checkbox"><input type="checkbox" checked={session.settings.showLineNumbers} onchange={(event) => setEditorVisibility('showLineNumbers', event)} />{t('lineNumbers')}</label>
+          <label class="checkbox"><input type="checkbox" checked={session.settings.showMinimap} onchange={(event) => setEditorVisibility('showMinimap', event)} />{t('minimap')}</label>
+          <label class="checkbox"><input type="checkbox" checked={session.settings.showFolding} onchange={(event) => setEditorVisibility('showFolding', event)} />{t('folding')}</label>
+          <label class="checkbox"><input type="checkbox" checked={session.settings.showGlyphMargin} onchange={(event) => setEditorVisibility('showGlyphMargin', event)} />{t('glyphMargin')}</label>
         </fieldset>
-        <label class="checkbox"><input type="checkbox" checked={session.settings.preserveOnRestart} onchange={setPreserveOnRestart} />重启后恢复最后工作状态</label>
-        <label class="checkbox"><input type="checkbox" checked={session.settings.showMenuBarIcon} onchange={setMenuBarIcon} />显示菜单栏图标</label>
-        <label class="checkbox"><input type="checkbox" checked={session.settings.showDockIcon} onchange={setDockIcon} />显示 Dock 图标</label>
-        <label class="checkbox"><input type="checkbox" checked={session.settings.launchAtLogin} onchange={setLaunchAtLogin} />登录时启动 Edgedor</label>
-        <p class="settings-note">所有标签 24 小时未访问会过期，并进入当前运行期间的可撤销槽。文件只有触发保存时才写回原路径。</p>
-        <button class="danger" onclick={clearWorkspace}>清空标签和撤销槽</button>
-        <button class="danger" onclick={resetSettings}>恢复出厂设置</button>
-        <button class="done" onclick={closeSettings}>完成</button>
+        <label class="checkbox"><input type="checkbox" checked={session.settings.preserveOnRestart} onchange={setPreserveOnRestart} />{t('preserveRestart')}</label>
+        <label class="checkbox"><input type="checkbox" checked={session.settings.showMenuBarIcon} onchange={setMenuBarIcon} />{t('showMenuBar')}</label>
+        <label class="checkbox"><input type="checkbox" checked={session.settings.showDockIcon} onchange={setDockIcon} />{t('showDock')}</label>
+        <label class="checkbox"><input type="checkbox" checked={session.settings.launchAtLogin} onchange={setLaunchAtLogin} />{t('launchAtLogin')}</label>
+        <p class="settings-note">{t('allTabsExpiryNote')}</p>
+        <button class="danger" onclick={clearWorkspace}>{t('clearWorkspace')}</button>
+        <button class="danger" onclick={resetSettings}>{t('resetSettings')}</button>
+        <button class="done" onclick={closeSettings}>{t('done')}</button>
       </div>
     </div>
   {/if}
