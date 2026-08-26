@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: planning
 stopped_at: Phase 3 core interaction slice compiled; runtime permission and file preview remain
-last_updated: "2026-08-26T04:22:00.000Z"
-last_activity: 2026-08-26 — 完成 Tauri/Svelte/Monaco 基础切片与 arm64 构建尝试
+last_updated: "2026-08-27T00:30:00.000+08:00"
+last_activity: 2026-08-27 — 完成自适应标签、自动语言检测、快捷键冲突与跨标签完整搜索
 progress:
   total_phases: 6
   completed_phases: 0
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 Phase: 3 of 6 (编辑器交互与会话)
 Plan: 1 of 1 in current phase
 Status: In progress
-Last activity: 2026-08-26 — 创建初始六阶段 MVP 路线图并完成需求追踪
+Last activity: 2026-08-27 — 完成 quick task 260827-0d0：自适应编辑器行为补齐
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -67,6 +67,12 @@ None yet.
 
 - Phase 1 需在目标 macOS 26 Apple Silicon 实机验证 Swift/AppKit 与 Tauri WebView 桥接；研究指出当前环境可能尚未安装 Rust 工具链。
 - Phase 2 需实机验证辅助功能/输入监控权限、台前调度和多屏 Retina 坐标。
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260827-0d0 | 补齐自适应标签、自动语言检测、快捷键冲突和跨标签完整搜索 | 2026-08-27 | 0ba7f53 | [260827-0d0-adaptive-editor-behavior](./quick/260827-0d0-adaptive-editor-behavior/) |
 
 ## Deferred Items
 
