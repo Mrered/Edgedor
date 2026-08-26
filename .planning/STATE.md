@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: planning
 stopped_at: Phase 3 core interaction slice compiled; runtime permission and file preview remain
-last_updated: "2026-08-27T02:09:00.000+08:00"
-last_activity: 2026-08-27 — 完成会话检查点边界重构，待安装包实机复核
+last_updated: "2026-08-27T02:39:00.000+08:00"
+last_activity: 2026-08-27 — 完成四组可调编辑布局，待安装包实机复核
 progress:
   total_phases: 6
   completed_phases: 0
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 Phase: 3 of 6 (编辑器交互与会话)
 Plan: 1 of 1 in current phase
 Status: In progress
-Last activity: 2026-08-27 — 完成 quick task 260827-1ij：会话检查点边界重构（自动验证 6/6）
+Last activity: 2026-08-27 — 完成 quick task 260827-31h：四组可调编辑布局（自动验证 7/7）
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -76,6 +76,7 @@ None yet.
 | 260827-0ro | 修复跨侧面板动画与固定面板失焦层级 | 2026-08-27 | e68d0e0 |  | [260827-0ro-native-panel-transition](./quick/260827-0ro-native-panel-transition/) |
 | 260827-19k | 让 Vim 方案支持自定义快捷键并即时生效 | 2026-08-27 | 8e96cf1 |  | [260827-19k-vim](./quick/260827-19k-vim/) |
 | 260827-1ij | 严格限制会话内容快照到切换标签、隐藏面板和正常退出 | 2026-08-27 | b8ae1a6 | Needs Review | [260827-1ij-session-checkpoints](./quick/260827-1ij-session-checkpoints/) |
+| 260827-31h | 扩展为最多四个可拖比例并可恢复的编辑组 | 2026-08-27 | 984793e | Needs Review | [260827-31h-editor-groups](./quick/260827-31h-editor-groups/) |
 
 ## Deferred Items
 
