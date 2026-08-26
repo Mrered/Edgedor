@@ -216,6 +216,16 @@ export function focusTab(state: SessionState, tabId: string, now = Date.now()): 
   };
 }
 
+export function touchTab(state: SessionState, tabId: string, now = Date.now()): SessionState {
+  if (!state.tabs.some((tab) => tab.id === tabId)) return state;
+  return {
+    ...state,
+    tabs: state.tabs.map((tab) => tab.id === tabId
+      ? { ...tab, lastFocusedAt: now, updatedAt: Math.max(tab.updatedAt, now) }
+      : tab)
+  };
+}
+
 export function moveTabToGroup(state: SessionState, tabId: string, targetGroupId: string, now = Date.now()): SessionState {
   const tab = state.tabs.find((candidate) => candidate.id === tabId);
   const target = state.groups.find((group) => group.id === targetGroupId);
@@ -273,7 +283,7 @@ export interface ExpiryResult { state: SessionState; expired: SessionTab[]; }
 
 export function expireTabs(state: SessionState, now = Date.now()): ExpiryResult {
   const expired = state.tabs
-    .filter((tab) => tab.kind === 'temporary' && now - tab.lastFocusedAt >= TAB_EXPIRY_MS)
+    .filter((tab) => now - tab.lastFocusedAt >= TAB_EXPIRY_MS)
     .sort((first, second) => first.lastFocusedAt - second.lastFocusedAt);
   return expired.reduce((result, tab) => ({ state: closeTab(result.state, tab.id, now, 'expired'), expired: [...result.expired, tab] }), { state, expired: [] } as ExpiryResult);
 }
@@ -299,7 +309,7 @@ export function serializeSession(state: SessionState): string {
   const tabs = state.tabs.map((tab) => tab.kind === 'preview'
     ? { ...tab, content: '', previewDataUrl: undefined }
     : tab);
-  return JSON.stringify({ ...state, tabs, version: SESSION_VERSION });
+  return JSON.stringify({ ...state, tabs, undoSlots: [], version: SESSION_VERSION });
 }
 
 export function serializeSettings(settings: SessionSettings): string {
@@ -340,6 +350,7 @@ export function deserializeSession(serialized: string): SessionState | undefined
     const parsed = JSON.parse(serialized) as SessionState;
     if (parsed?.version !== SESSION_VERSION || !Array.isArray(parsed.tabs) || !Array.isArray(parsed.groups)) return undefined;
     parsed.settings = normalizeSettings(parsed.settings ?? {});
+    parsed.undoSlots = [];
     return parsed;
   } catch {
     return undefined;

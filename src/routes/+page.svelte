@@ -8,7 +8,8 @@
   import PreviewSurface from '../components/PreviewSurface.svelte';
   import ToolbarMount from '../components/ToolbarMount.svelte';
   import { listenPanelStatus, panelAction, type PanelStatus } from '../lib/tauri/panel';
-  import { addTab, closeTab, createGroup, createSessionState, createTab, deserializeSession, deserializeSettings, expireTabs, focusTab, moveTabToGroup, removeGroup, restoreLatest, serializeSession, serializeSettings, setGroupRatio, updateTab, type EditorGroup, type EditorSnapshot, type SessionState, type SessionTab } from '../lib/session';
+  import { createTranslator } from '../lib/i18n';
+  import { DEFAULT_SESSION_SETTINGS, addTab, closeTab, createGroup, createSessionState, createTab, deserializeSession, deserializeSettings, expireTabs, focusTab, moveTabToGroup, removeGroup, restoreLatest, serializeSession, serializeSettings, setGroupRatio, touchTab, updateTab, type EditorGroup, type EditorSnapshot, type SessionState, type SessionTab } from '../lib/session';
   import { validateShortcut, type EditorCommand } from '../lib/shortcuts';
   let status: PanelStatus = { visible: true, focused: true, bridgeReady: false };
   let pinned = false;
@@ -27,15 +28,16 @@
   let draggedTabId = '';
   let notice = '';
   let noticeTimer: number | undefined;
+  const t = createTranslator();
   const editorShortcutCommands: Array<{ id: EditorCommand; label: string }> = [
-    { id: 'selectNextOccurrence', label: '逐个选择相同内容' },
-    { id: 'selectAllOccurrences', label: '选择所有相同内容' },
-    { id: 'addCursorAbove', label: '上方添加光标' },
-    { id: 'addCursorBelow', label: '下方添加光标' },
-    { id: 'moveLineUp', label: '上移行' },
-    { id: 'moveLineDown', label: '下移行' },
-    { id: 'deleteLine', label: '删除行' },
-    { id: 'toggleComment', label: '切换行注释' }
+    { id: 'selectNextOccurrence', label: t('selectNextOccurrence') },
+    { id: 'selectAllOccurrences', label: t('selectAllOccurrences') },
+    { id: 'addCursorAbove', label: t('addCursorAbove') },
+    { id: 'addCursorBelow', label: t('addCursorBelow') },
+    { id: 'moveLineUp', label: t('moveLineUp') },
+    { id: 'moveLineDown', label: t('moveLineDown') },
+    { id: 'deleteLine', label: t('deleteLine') },
+    { id: 'toggleComment', label: t('toggleComment') }
   ];
   $: activeTab = session.tabs.find((tab) => tab.id === session.groups.find((group) => group.id === session.activeGroupId)?.activeTabId);
   const SESSION_KEY = 'edgedor.session';
@@ -48,45 +50,45 @@
     const tab = session.tabs.find((candidate) => candidate.id === tabId);
     if (!tab) return;
     persist(closeTab(session, tabId));
-    showNotice(`${tab.title} 已关闭，可用“撤销关闭”恢复`);
+    showNotice(t('tabClosed', { name: tab.title }));
   }
   function closeActive() { if (activeTab) closeTabById(activeTab.id); }
   function renameTab(tabId: string) {
     const tab = session.tabs.find((candidate) => candidate.id === tabId);
     if (!tab) return;
-    const title = window.prompt('重命名标签', tab.title)?.trim();
+    const title = window.prompt(t('renameTab'), tab.title)?.trim();
     if (title) persist(updateTab(session, tabId, { title, manuallyNamed: true }));
   }
   function restoreClosed() {
     const slot = session.undoSlots[0];
-    if (!slot) { showNotice('没有可撤销的关闭标签'); return; }
+    if (!slot) { showNotice(t('nothingToRestore')); return; }
     persist(restoreLatest(session));
-    showNotice(`${slot.tab.title} 已恢复${slot.reason === 'expired' ? '（原标签已超时）' : ''}`);
+    showNotice(t(slot.reason === 'expired' ? 'tabRestoredExpired' : 'tabRestored', { name: slot.tab.title }));
   }
   function showNotice(message: string) {
     notice = message;
     if (noticeTimer) window.clearTimeout(noticeTimer);
     noticeTimer = window.setTimeout(() => { notice = ''; }, 4200);
   }
-  function editContentFor(tabId: string, content: string) { updateEphemeral(updateTab(session, tabId, { content })); }
+  function editContentFor(tabId: string, content: string) { updateEphemeral(touchTab(updateTab(session, tabId, { content }), tabId)); }
   function editContent(content: string) { if (activeTab) editContentFor(activeTab.id, content); }
   function editStateFor(tabId: string, editor: EditorSnapshot) { updateEphemeral(updateTab(session, tabId, { editor })); }
   async function saveActive() {
     if (!activeTab) return;
-    const path = activeTab.filePath ?? await save({ defaultPath: `${activeTab.title.replace(/[^\w.-]+/g, '-')}.txt`, filters: [{ name: '文本文件', extensions: ['txt', 'md', 'json', 'js', 'ts', 'rs', 'py'] }] });
+    const path = activeTab.filePath ?? await save({ defaultPath: `${activeTab.title.replace(/[^\w.-]+/g, '-')}.txt`, filters: [{ name: t('textFiles'), extensions: ['txt', 'md', 'json', 'js', 'ts', 'rs', 'py'] }] });
     if (!path) return;
-    try { await invoke('save_file', { path, content: activeTab.content, encoding: activeTab.encoding ?? 'utf-8', line_ending: activeTab.lineEnding ?? '\n' }); persist(updateTab(session, activeTab.id, { filePath: path, kind: 'file', title: path.split('/').at(-1) ?? activeTab.title, manuallyNamed: true, dirty: false })); showNotice(`${path.split('/').at(-1) ?? '文件'} 已保存`); }
-    catch (error) { window.alert(`保存失败：${String(error)}`); }
+    try { await invoke('save_file', { path, content: activeTab.content, encoding: activeTab.encoding ?? 'utf-8', line_ending: activeTab.lineEnding ?? '\n' }); persist(updateTab(session, activeTab.id, { filePath: path, kind: 'file', title: path.split('/').at(-1) ?? activeTab.title, manuallyNamed: true, dirty: false })); showNotice(t('fileSaved', { name: path.split('/').at(-1) ?? t('unnamedFile') })); }
+    catch (error) { window.alert(`${t('saveFailed')}${String(error)}`); }
   }
   async function togglePinned() { pinned = !pinned; persist({ ...session, settings: { ...session.settings, pinned } }); await invoke('set_panel_pinned', { pinned }); }
   function setShortcutProfile(event: Event) { const value = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['shortcutProfile']; persist({ ...session, settings: { ...session.settings, shortcutProfile: value } }); }
-  function setShortcutOverride(command: EditorCommand, event: Event) { const raw = (event.currentTarget as HTMLInputElement).value; const value = validateShortcut(raw); const shortcutOverrides = { ...session.settings.shortcutOverrides }; if (raw.trim() && !value) { showNotice('快捷键格式无效，例如 Cmd+Shift+L'); (event.currentTarget as HTMLInputElement).value = shortcutOverrides[command] ?? ''; return; } if (value) shortcutOverrides[command] = value; else delete shortcutOverrides[command]; persist({ ...session, settings: { ...session.settings, shortcutOverrides } }); }
+  function setShortcutOverride(command: EditorCommand, event: Event) { const raw = (event.currentTarget as HTMLInputElement).value; const value = validateShortcut(raw); const shortcutOverrides = { ...session.settings.shortcutOverrides }; if (raw.trim() && !value) { showNotice(t('invalidShortcut')); (event.currentTarget as HTMLInputElement).value = shortcutOverrides[command] ?? ''; return; } if (value) shortcutOverrides[command] = value; else delete shortcutOverrides[command]; persist({ ...session, settings: { ...session.settings, shortcutOverrides } }); }
   function setPreserveOnRestart(event: Event) { const preserve = (event.currentTarget as HTMLInputElement).checked; const next = { ...session, settings: { ...session.settings, preserveOnRestart: preserve } }; session = next; persistSettings(next.settings); if (preserve) localStorage.setItem(SESSION_KEY, serializeSession(next)); else localStorage.removeItem(SESSION_KEY); }
   async function setMenuBarIcon(event: Event) { const visible = (event.currentTarget as HTMLInputElement).checked; persist({ ...session, settings: { ...session.settings, showMenuBarIcon: visible } }); await invoke('set_menu_bar_icon_visible', { visible }); }
   async function setDockIcon(event: Event) {
     const visible = (event.currentTarget as HTMLInputElement).checked;
     try { await invoke('set_dock_icon_visible', { visible }); persist({ ...session, settings: { ...session.settings, showDockIcon: visible } }); }
-    catch (error) { (event.currentTarget as HTMLInputElement).checked = false; showNotice(`Dock 图标设置失败：${String(error)}`); }
+    catch (error) { (event.currentTarget as HTMLInputElement).checked = false; showNotice(`${t('dockSettingFailed')}${String(error)}`); }
   }
   async function setLaunchAtLogin(event: Event) {
     const enabled = (event.currentTarget as HTMLInputElement).checked;
@@ -95,14 +97,14 @@
       persist({ ...session, settings: { ...session.settings, launchAtLogin: enabled } });
     } catch (error) {
       (event.currentTarget as HTMLInputElement).checked = false;
-      showNotice(`登录启动设置失败：${String(error)}`);
+      showNotice(`${t('loginSettingFailed')}${String(error)}`);
     }
   }
   async function setEdgeModifier(event: Event) {
     const modifier = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['edgeModifier'];
     persist({ ...session, settings: { ...session.settings, edgeModifier: modifier } });
-    try { await invoke('set_edge_modifier', { modifier }); showNotice(`边缘触发键已改为 ${modifier}`); }
-    catch { showNotice('设置已保存，原生边缘触发接口尚未连接'); }
+    try { await invoke('set_edge_modifier', { modifier }); showNotice(t('modifierChanged', { modifier })); }
+    catch { showNotice(t('nativeTriggerUnavailable')); }
   }
   function setTabLayout(event: Event) {
     const tabLayout = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['tabLayout'];
@@ -131,16 +133,30 @@
     try {
       const preview = await invoke<{ path: string; data_url: string; mime: string }>('preview_file', { path: tab.filePath });
       persist(updateTab(session, tab.id, { content: preview.data_url, previewDataUrl: preview.data_url, previewMime: preview.mime }));
-      showNotice(`${tab.title} 已刷新`);
-    } catch (error) { showNotice(`刷新失败：${String(error)}`); }
+      showNotice(t('previewRefreshed', { name: tab.title }));
+    } catch (error) { showNotice(`${t('refreshFailed')}${String(error)}`); }
   }
   function clearWorkspace() {
-    if (!window.confirm('清空所有标签和撤销槽？真实文件不会被删除。')) return;
+    if (!window.confirm(t('clearConfirm'))) return;
     persist({ ...createSessionState(), settings: session.settings });
-    showNotice('工作区已清空');
+    showNotice(t('workspaceCleared'));
+  }
+  async function resetSettings() {
+    if (!window.confirm('恢复所有设置为默认值？标签内容和真实文件不会被删除。')) return;
+    const settings = { ...DEFAULT_SESSION_SETTINGS, shortcutOverrides: {} };
+    pinned = false;
+    try { await disableAutostart(); } catch { /* autostart may be unavailable outside the packaged app */ }
+    persist({ ...session, settings });
+    await Promise.allSettled([
+      invoke('set_menu_bar_icon_visible', { visible: settings.showMenuBarIcon }),
+      invoke('set_dock_icon_visible', { visible: settings.showDockIcon }),
+      invoke('set_panel_pinned', { pinned: false }),
+      invoke('set_edge_modifier', { modifier: settings.edgeModifier })
+    ]);
+    showNotice('设置已恢复为默认值');
   }
   function addSplit() {
-    if (session.groups.length >= 2) { showNotice('当前版本支持两个编辑分区'); return; }
+    if (session.groups.length >= 2) { showNotice(t('splitLimit')); return; }
     const next = createGroup(session, 'vertical');
     persist(addTab(next, createTab(), next.activeGroupId));
   }
@@ -151,7 +167,7 @@
     persist({ ...session, groups: session.groups.map((group) => group.parentId ? { ...group, orientation } : group) });
   }
   function closeSplit() {
-    if (session.groups.length <= 1) { showNotice('当前只有一个编辑分区'); return; }
+    if (session.groups.length <= 1) { showNotice(t('oneGroupOnly')); return; }
     persist(removeGroup(session, session.activeGroupId));
   }
   function startTabDrag(tabId: string, event: DragEvent) {
@@ -191,21 +207,35 @@
         if (current?.kind === 'preview' && current.filePath === previewTab.path) updateEphemeral(updateTab(session, previewTab.id, { content: preview.data_url, previewDataUrl: preview.data_url, previewMime: preview.mime, readOnly: true }));
       } catch {
         if (session.tabs.some((tab) => tab.id === previewTab.id)) updateEphemeral(closeTab(session, previewTab.id, Date.now(), 'closed'));
-        showNotice(`${previewTab.title} 无法恢复，已关闭`);
+        showNotice(t('previewRestoreFailed', { name: previewTab.title }));
+      }
+    }
+    persist(session);
+  }
+  async function rehydrateFileBindings() {
+    const files = session.tabs.filter((tab) => tab.kind === 'file' && tab.filePath).map((tab) => ({ id: tab.id, path: tab.filePath as string, title: tab.title }));
+    for (const file of files) {
+      try {
+        await invoke('open_text_file', { path: file.path });
+      } catch {
+        const current = session.tabs.find((tab) => tab.id === file.id);
+        if (current?.kind !== 'file' || current.filePath !== file.path) continue;
+        updateEphemeral(updateTab(session, file.id, { kind: 'temporary', filePath: undefined, encoding: undefined, lineEnding: undefined, dirty: false }));
+        showNotice(`${file.title} 的原路径已失效，已转为临时标签`);
       }
     }
     persist(session);
   }
   async function openPath(path: string, title?: string) {
     if (isPreviewPath(path)) {
-      try { await addPreviewPath(path, title); } catch (error) { window.alert(`不支持预览此文件：${String(error)}`); }
+      try { await addPreviewPath(path, title); } catch (error) { window.alert(`${t('unsupportedPreview')}${String(error)}`); }
       return;
     }
     try {
       const opened = await invoke<{ path: string; content: string; language: string; encoding: string; line_ending: '\n' | '\r\n' | '\r' }>('open_text_file', { path });
       persist(addTab(session, createTab({ kind: 'file', filePath: opened.path, content: opened.content, language: opened.language, encoding: opened.encoding, lineEnding: opened.line_ending, title: title ?? path.split('/').at(-1) })));
     } catch (textError) {
-      try { await addPreviewPath(path, title); } catch { window.alert(`不支持打开此文件：${String(textError)}`); }
+      try { await addPreviewPath(path, title); } catch { window.alert(`${t('unsupportedOpen')}${String(textError)}`); }
     }
   }
   async function openTextFile() {
@@ -220,7 +250,7 @@
     const selectedPaths = Array.isArray(path) ? path : [path];
     for (const selectedPath of selectedPaths) {
       if (!selectedPath) continue;
-      try { await addPreviewPath(selectedPath); } catch (error) { window.alert(`不支持预览此文件：${String(error)}`); }
+      try { await addPreviewPath(selectedPath); } catch (error) { window.alert(`${t('unsupportedPreview')}${String(error)}`); }
     }
   }
   async function openDroppedFile(event: DragEvent) {
@@ -239,8 +269,9 @@
       : addTab(expiredOnStartup.state, createTab());
     const restoredActiveTabId = restored.groups.find((group) => group.id === restored.activeGroupId)?.activeTabId;
     session = restoredActiveTabId ? focusTab(restored, restoredActiveTabId) : restored;
-    persist(restored);
+    persist(session);
     void rehydratePreviews();
+    void rehydrateFileBindings();
     pinned = session.settings.pinned;
     void isAutostartEnabled().then((autostartEnabled) => {
       if (autostartEnabled !== session.settings.launchAtLogin) persist({ ...session, settings: { ...session.settings, launchAtLogin: autostartEnabled } });
@@ -249,7 +280,7 @@
     void invoke('set_dock_icon_visible', { visible: session.settings.showDockIcon });
     void invoke('set_panel_pinned', { pinned });
     void invoke('set_edge_modifier', { modifier: session.settings.edgeModifier });
-    expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) { persist(result.state); showNotice(`${result.expired.length} 个未访问标签已超时，已放入撤销槽`); } }, 60_000);
+    expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) { persist(result.state); showNotice(t('tabsExpired', { count: result.expired.length })); } }, 60_000);
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && showSearch) { event.preventDefault(); closeSearch(); return; }
       if (event.key === 'Escape' && showSettings) { event.preventDefault(); closeSettings(); return; }
@@ -307,7 +338,7 @@
   <section class:split-workspace={session.groups.length > 1} class:split-horizontal={splitOrientation() === 'horizontal'} class="workspace" aria-label="临时编辑区">
     {#each session.groups as group (group.id)}
       {@const tab = groupTab(group)}
-      <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={`编辑分区 ${group.id}`} ondragover={(event) => event.preventDefault()} ondrop={(event) => dropTabInGroup(group.id, event)}>
+      <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={`编辑分区 ${group.id}`} onpointerdown={() => { if (tab) updateEphemeral(focusTab(session, tab.id)); }} onfocusin={() => { if (tab) updateEphemeral(focusTab(session, tab.id)); }} ondragover={(event) => event.preventDefault()} ondrop={(event) => dropTabInGroup(group.id, event)}>
         {#if tab}
           {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} onRefresh={() => refreshPreview(tab)} />{:else}{#key `${tab.id}:${session.settings.fontSize}:${session.settings.shortcutProfile}:${session.settings.showLineNumbers}:${session.settings.showMinimap}:${session.settings.showFolding}:${session.settings.showGlyphMargin}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} editorVisibility={{ showLineNumbers: session.settings.showLineNumbers, showMinimap: session.settings.showMinimap, showFolding: session.settings.showFolding, showGlyphMargin: session.settings.showGlyphMargin }} onChange={(content) => editContentFor(tab.id, content)} onStateChange={(editor) => editStateFor(tab.id, editor)} />{/key}{/if}
         {:else}<button class="empty" onclick={() => { const next = addTab(session, createTab(), group.id); persist(next); }}>新建分区标签</button>{/if}
@@ -350,8 +381,9 @@
         <label class="checkbox"><input type="checkbox" checked={session.settings.showMenuBarIcon} onchange={setMenuBarIcon} />显示菜单栏图标</label>
         <label class="checkbox"><input type="checkbox" checked={session.settings.showDockIcon} onchange={setDockIcon} />显示 Dock 图标</label>
         <label class="checkbox"><input type="checkbox" checked={session.settings.launchAtLogin} onchange={setLaunchAtLogin} />登录时启动 Edgedor</label>
-        <p class="settings-note">临时标签 24 小时未访问会过期，并进入可撤销槽。文件只有触发保存时才写回原路径。</p>
+        <p class="settings-note">所有标签 24 小时未访问会过期，并进入当前运行期间的可撤销槽。文件只有触发保存时才写回原路径。</p>
         <button class="danger" onclick={clearWorkspace}>清空标签和撤销槽</button>
+        <button class="danger" onclick={resetSettings}>恢复出厂设置</button>
         <button class="done" onclick={closeSettings}>完成</button>
       </div>
     </div>

@@ -13,7 +13,8 @@ import {
   restoreLatest,
   serializeSettings,
   deserializeSettings,
-  serializeSession
+  serializeSession,
+  touchTab
 } from './model.ts';
 
 const assert = (condition: unknown, message: string) => {
@@ -36,8 +37,10 @@ assert((state.tabs[0]?.lastFocusedAt ?? 0) > start + TAB_EXPIRY_MS, 'refreshes r
 const fileTab = createTab({ id: 'file-1', kind: 'file', filePath: '/tmp/example.ts', now: start });
 state = addTab(state, fileTab);
 const withFile = expireTabs(state, start + TAB_EXPIRY_MS + 1);
-assert(withFile.state.tabs.some((candidate) => candidate.id === fileTab.id), 'keeps file tabs out of temporary expiry');
+assert(!withFile.state.tabs.some((candidate) => candidate.id === fileTab.id), 'expires inactive file tabs');
 const previewTab = createTab({ id: 'preview-1', kind: 'preview', filePath: '/tmp/example.pdf', content: 'data:application/pdf;base64,very-large-data', previewDataUrl: 'data:application/pdf;base64,very-large-data', now: start });
+const expiredPreview = expireTabs(addTab(createSessionState(start), previewTab), start + TAB_EXPIRY_MS);
+assert(expiredPreview.expired[0]?.id === previewTab.id, 'expires inactive preview tabs');
 const serializedPreview = JSON.parse(serializeSession(addTab(state, previewTab))) as { tabs: Array<{ id: string; content: string; previewDataUrl?: string }> };
 const persistedPreview = serializedPreview.tabs.find((candidate) => candidate.id === previewTab.id);
 assert(persistedPreview?.content === '' && persistedPreview.previewDataUrl === undefined, 'does not persist preview payload');
@@ -53,6 +56,7 @@ for (let index = 0; index < MAX_UNDO_SLOTS + 2; index += 1) {
 assert(state.undoSlots.length === MAX_UNDO_SLOTS, 'caps undo slots');
 const restored = deserializeSession(serializeSession(state));
 assert(restored?.tabs.length === state.tabs.length, 'round-trips serialized state');
+assert(restored?.undoSlots.length === 0, 'does not restore undo slots across restart');
 const settingsRoundTrip = deserializeSettings(serializeSettings(createSessionState().settings));
 assert(settingsRoundTrip?.preserveOnRestart === true && settingsRoundTrip?.shortcutProfile === 'vscode', 'round-trips settings independently');
 const expiredAtStartup = expireTabs(addTab(createSessionState(start), createTab({ id: 'old', now: start })), start + TAB_EXPIRY_MS);
@@ -61,4 +65,6 @@ let batchExpiry = createSessionState(start);
 for (let index = 0; index < 12; index += 1) batchExpiry = addTab(batchExpiry, createTab({ id: `stale-${index}`, now: start + index }));
 const batchResult = expireTabs(batchExpiry, start + TAB_EXPIRY_MS + 12);
 assert(batchResult.state.undoSlots.length === MAX_UNDO_SLOTS && batchResult.state.undoSlots[0]?.tab.id === 'stale-11', 'keeps newest expired tabs in undo slots');
+const touched = touchTab(addTab(createSessionState(start), createTab({ id: 'touch-me', now: start })), 'touch-me', start + 4_000);
+assert(touched.tabs[0]?.lastFocusedAt === start + 4_000, 'touch refreshes tab lifetime without changing group focus');
 console.log('Edgedor session self-check passed');
