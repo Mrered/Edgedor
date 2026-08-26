@@ -262,7 +262,7 @@ export interface ExpiryResult { state: SessionState; expired: SessionTab[]; }
 export function expireTabs(state: SessionState, now = Date.now()): ExpiryResult {
   const expired = state.tabs
     .filter((tab) => tab.kind === 'temporary' && now - tab.lastFocusedAt >= TAB_EXPIRY_MS)
-    .sort((first, second) => second.lastFocusedAt - first.lastFocusedAt);
+    .sort((first, second) => first.lastFocusedAt - second.lastFocusedAt);
   return expired.reduce((result, tab) => ({ state: closeTab(result.state, tab.id, now, 'expired'), expired: [...result.expired, tab] }), { state, expired: [] } as ExpiryResult);
 }
 

@@ -57,4 +57,8 @@ const settingsRoundTrip = deserializeSettings(serializeSettings(createSessionSta
 assert(settingsRoundTrip?.preserveOnRestart === true && settingsRoundTrip?.shortcutProfile === 'vscode', 'round-trips settings independently');
 const expiredAtStartup = expireTabs(addTab(createSessionState(start), createTab({ id: 'old', now: start })), start + TAB_EXPIRY_MS);
 assert(expiredAtStartup.expired.length === 1 && expiredAtStartup.state.undoSlots[0]?.tab.id === 'old', 'expires temporary tabs during startup recovery');
+let batchExpiry = createSessionState(start);
+for (let index = 0; index < 12; index += 1) batchExpiry = addTab(batchExpiry, createTab({ id: `stale-${index}`, now: start + index }));
+const batchResult = expireTabs(batchExpiry, start + TAB_EXPIRY_MS + 12);
+assert(batchResult.state.undoSlots.length === MAX_UNDO_SLOTS && batchResult.state.undoSlots[0]?.tab.id === 'stale-11', 'keeps newest expired tabs in undo slots');
 console.log('Edgedor session self-check passed');
