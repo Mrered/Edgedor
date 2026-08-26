@@ -12,7 +12,7 @@
   import ToolbarMount from '../components/ToolbarMount.svelte';
   import { listenPanelStatus, panelAction, type PanelStatus } from '../lib/tauri/panel';
   import { createTranslator } from '../lib/i18n';
-  import { DEFAULT_SESSION_SETTINGS, MAX_EDITOR_GROUPS, MIN_GROUP_RATIO, addTab, clearSessionCheckpoint, closeTab, createGroup, createSessionState, createTab, expireTabs, focusTab, moveTabToGroup, persistSessionSettings, readStartupState, removeGroup, resizeAdjacentGroups, restoreLatest, touchTab, updateTab, writeSessionCheckpoint, type EditorGroup, type EditorSnapshot, type SessionSettings, type SessionState, type SessionTab } from '../lib/session';
+  import { DEFAULT_SESSION_SETTINGS, MAX_EDITOR_GROUPS, MIN_GROUP_RATIO, addTab, applySaveResult, captureSaveRequest, clearSessionCheckpoint, closeTab, createGroup, createSessionState, createTab, expireTabs, focusTab, moveTabToGroup, persistSessionSettings, readStartupState, removeGroup, resizeAdjacentGroups, restoreLatest, touchTab, updateTab, writeSessionCheckpoint, type EditorGroup, type EditorSnapshot, type SessionSettings, type SessionState, type SessionTab } from '../lib/session';
   import { shortcutOverridesFingerprint, validateShortcut, type EditorCommand } from '../lib/shortcuts';
   let status: PanelStatus = { visible: true, focused: true, bridgeReady: false };
   let pinned = false;
@@ -125,9 +125,10 @@
   function editStateFor(tabId: string, editor: EditorSnapshot) { applySession(updateTab(session, tabId, { editor })); }
   async function saveActive() {
     if (!activeTab) return;
-    const path = activeTab.filePath ?? await save({ defaultPath: `${activeTab.title.replace(/[^\w.-]+/g, '-')}.txt`, filters: [{ name: t('textFiles'), extensions: ['txt', 'md', 'json', 'js', 'ts', 'rs', 'py'] }] });
+    const request = captureSaveRequest(activeTab);
+    const path = request.filePath ?? await save({ defaultPath: `${request.title.replace(/[^\w.-]+/g, '-')}.txt`, filters: [{ name: t('textFiles'), extensions: ['txt', 'md', 'json', 'js', 'ts', 'rs', 'py'] }] });
     if (!path) return;
-    try { await invoke('save_file', { path, content: activeTab.content, encoding: activeTab.encoding ?? 'utf-8', line_ending: activeTab.lineEnding ?? '\n' }); applySession(updateTab(session, activeTab.id, { filePath: path, kind: 'file', title: path.split('/').at(-1) ?? activeTab.title, manuallyNamed: true, dirty: false })); showNotice(t('fileSaved', { name: path.split('/').at(-1) ?? t('unnamedFile') })); }
+    try { await invoke('save_file', { path, content: request.content, encoding: request.encoding ?? 'utf-8', lineEnding: request.lineEnding ?? '\n' }); applySession(applySaveResult(session, request, path)); showNotice(t('fileSaved', { name: path.split('/').at(-1) ?? t('unnamedFile') })); }
     catch (error) { window.alert(`${t('saveFailed')}${String(error)}`); }
   }
   async function togglePinned() { pinned = !pinned; updateSettings({ ...session.settings, pinned }); await invoke('set_panel_pinned', { pinned }); }
