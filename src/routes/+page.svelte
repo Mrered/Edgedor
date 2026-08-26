@@ -11,7 +11,7 @@
   import ToolbarMount from '../components/ToolbarMount.svelte';
   import { listenPanelStatus, panelAction, type PanelStatus } from '../lib/tauri/panel';
   import { createTranslator } from '../lib/i18n';
-  import { DEFAULT_SESSION_SETTINGS, SESSION_KEY, SETTINGS_KEY, addTab, clearSessionCheckpoint, closeTab, createGroup, createSessionState, createTab, deserializeSettings, expireTabs, focusTab, moveTabToGroup, persistSessionSettings, readSessionCheckpoint, removeGroup, restoreLatest, setGroupRatio, touchTab, updateTab, writeSessionCheckpoint, type EditorGroup, type EditorSnapshot, type SessionSettings, type SessionState, type SessionTab } from '../lib/session';
+  import { DEFAULT_SESSION_SETTINGS, MAX_EDITOR_GROUPS, MIN_GROUP_RATIO, SESSION_KEY, SETTINGS_KEY, addTab, clearSessionCheckpoint, closeTab, createGroup, createSessionState, createTab, deserializeSettings, expireTabs, focusTab, moveTabToGroup, persistSessionSettings, readSessionCheckpoint, removeGroup, resizeAdjacentGroups, restoreLatest, touchTab, updateTab, writeSessionCheckpoint, type EditorGroup, type EditorSnapshot, type SessionSettings, type SessionState, type SessionTab } from '../lib/session';
   import { shortcutOverridesFingerprint, validateShortcut, type EditorCommand } from '../lib/shortcuts';
   let status: PanelStatus = { visible: true, focused: true, bridgeReady: false };
   let pinned = false;
@@ -35,9 +35,19 @@
   let commandIndex = 0;
   let overlayOrigin: HTMLElement | null = null;
   let draggedTabId = '';
+  let workspaceElement: HTMLElement;
+  let separatorDrag: {
+    pointerId: number;
+    separatorIndex: number;
+    element: HTMLElement;
+    startPosition: number;
+    containerSize: number;
+    initialLeadingWeight: number;
+  } | undefined;
   let notice = '';
   let noticeTimer: number | undefined;
   const t = createTranslator();
+  const INTERNAL_TAB_MIME = 'application/x-edgedor-tab';
   const languageOptions = ['plaintext', 'javascript', 'typescript', 'json', 'html', 'css', 'markdown', 'python', 'rust', 'go', 'java', 'c', 'cpp', 'csharp', 'shell', 'sql', 'yaml', 'xml'];
   const editorShortcutCommands: Array<{ id: EditorCommand; label: string }> = [
     { id: 'selectNextOccurrence', label: t('selectNextOccurrence') },
@@ -258,42 +268,109 @@
     showNotice(t('settingsReset'));
   }
   function addSplit() {
-    if (session.groups.length >= 2) { showNotice(t('splitLimit')); return; }
-    const next = createGroup(session, 'vertical');
+    if (session.groups.length >= MAX_EDITOR_GROUPS) { showNotice(t('splitLimit')); return; }
+    const next = createGroup(session, session.splitOrientation);
     applyActivation(addTab(next, createTab(), next.activeGroupId));
   }
-  function splitOrientation(): 'horizontal' | 'vertical' { return session.groups.find((group) => group.parentId)?.orientation ?? 'vertical'; }
   function toggleSplitOrientation() {
     if (session.groups.length < 2) return;
-    const orientation = splitOrientation() === 'vertical' ? 'horizontal' : 'vertical';
-    applySession({ ...session, groups: session.groups.map((group) => group.parentId ? { ...group, orientation } : group) });
+    const splitOrientation = session.splitOrientation === 'vertical' ? 'horizontal' : 'vertical';
+    applySession({ ...session, splitOrientation });
   }
   function closeSplit() {
     if (session.groups.length <= 1) { showNotice(t('oneGroupOnly')); return; }
     applyActivation(removeGroup(session, session.activeGroupId));
   }
+  function cleanupTabDrag() { draggedTabId = ''; }
   function startTabDrag(tabId: string, event: DragEvent) {
+    cleanupTabDrag();
+    if (!session.tabs.some((tab) => tab.id === tabId)) return;
     draggedTabId = tabId;
-    event.dataTransfer?.setData('text/plain', tabId);
+    event.dataTransfer?.setData(INTERNAL_TAB_MIME, tabId);
     if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
   }
-  function dropTabInGroup(groupId: string, event: DragEvent) {
+  function internalTabId(event: DragEvent): string | undefined {
+    const types = Array.from(event.dataTransfer?.types ?? []);
+    const fromTransfer = types.includes(INTERNAL_TAB_MIME) ? event.dataTransfer?.getData(INTERNAL_TAB_MIME) : '';
+    const tabId = fromTransfer || draggedTabId;
+    return tabId && session.tabs.some((tab) => tab.id === tabId) ? tabId : undefined;
+  }
+  function dragInternalTabOver(event: DragEvent) {
+    if (!internalTabId(event)) return;
     event.preventDefault();
-    const tabId = event.dataTransfer?.getData('text/plain') || draggedTabId;
-    if (tabId) applyActivation(moveTabToGroup(session, tabId, groupId));
-    draggedTabId = '';
+    event.stopPropagation();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+  }
+  function dropTabInGroup(groupId: string, event: DragEvent) {
+    const tabId = internalTabId(event);
+    if (!tabId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    applyActivation(moveTabToGroup(session, tabId, groupId));
+    cleanupTabDrag();
   }
   function groupTab(group: EditorGroup) { return session.tabs.find((tab) => tab.id === group.activeTabId); }
-  function splitRatio() { return session.groups.find((group) => group.parentId)?.splitRatio ?? 0.5; }
-  function setSplitRatio(event: Event) {
-    const group = session.groups.find((candidate) => candidate.parentId);
-    if (!group) return;
-    applySession(setGroupRatio(session, group.id, Number((event.currentTarget as HTMLInputElement).value)));
+  function groupStyle(group: EditorGroup) {
+    return `flex-grow: ${group.splitRatio}; flex-basis: 0;`;
   }
-  function groupStyle(index: number) {
-    if (session.groups.length !== 2) return '';
-    const ratio = splitRatio();
-    return `flex: ${index === 0 ? 1 - ratio : ratio};`;
+  function separatorPosition(event: PointerEvent): number { return session.splitOrientation === 'vertical' ? event.clientX : event.clientY; }
+  function cleanupSeparatorDrag() {
+    const drag = separatorDrag;
+    separatorDrag = undefined;
+    if (drag?.element.hasPointerCapture(drag.pointerId)) drag.element.releasePointerCapture(drag.pointerId);
+  }
+  function startSeparatorDrag(separatorIndex: number, event: PointerEvent) {
+    if (!event.isPrimary || event.button !== 0) return;
+    cleanupSeparatorDrag();
+    const leadingGroup = session.groups[separatorIndex];
+    const bounds = workspaceElement.getBoundingClientRect();
+    const containerSize = session.splitOrientation === 'vertical' ? bounds.width : bounds.height;
+    if (!leadingGroup || containerSize <= 0) return;
+    const element = event.currentTarget as HTMLElement;
+    separatorDrag = {
+      pointerId: event.pointerId,
+      separatorIndex,
+      element,
+      startPosition: separatorPosition(event),
+      containerSize,
+      initialLeadingWeight: leadingGroup.splitRatio
+    };
+    element.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }
+  function resizeFromPointer(event: PointerEvent) {
+    const drag = separatorDrag;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const delta = (separatorPosition(event) - drag.startPosition) / drag.containerSize;
+    applySession(resizeAdjacentGroups(session, drag.separatorIndex, drag.initialLeadingWeight + delta));
+  }
+  function finishSeparatorDrag(event: PointerEvent) {
+    if (separatorDrag?.pointerId === event.pointerId) cleanupSeparatorDrag();
+  }
+  function separatorPairWeight(separatorIndex: number): number {
+    return session.groups[separatorIndex].splitRatio + session.groups[separatorIndex + 1].splitRatio;
+  }
+  function separatorLeadingOffset(separatorIndex: number): number {
+    return session.groups.slice(0, separatorIndex).reduce((sum, group) => sum + group.splitRatio, 0);
+  }
+  function separatorValue(separatorIndex: number): number {
+    return separatorLeadingOffset(separatorIndex) + session.groups[separatorIndex].splitRatio;
+  }
+  function resizeSeparatorFromKeyboard(separatorIndex: number, event: KeyboardEvent) {
+    const vertical = session.splitOrientation === 'vertical';
+    const negativeKey = vertical ? 'ArrowLeft' : 'ArrowUp';
+    const positiveKey = vertical ? 'ArrowRight' : 'ArrowDown';
+    const pairWeight = separatorPairWeight(separatorIndex);
+    const current = session.groups[separatorIndex].splitRatio;
+    let next: number | undefined;
+    if (event.key === negativeKey) next = current - pairWeight * 0.02;
+    if (event.key === positiveKey) next = current + pairWeight * 0.02;
+    if (event.key === 'Home') next = MIN_GROUP_RATIO;
+    if (event.key === 'End') next = pairWeight - MIN_GROUP_RATIO;
+    if (next === undefined) return;
+    event.preventDefault();
+    event.stopPropagation();
+    applySession(resizeAdjacentGroups(session, separatorIndex, next));
   }
   function isPreviewPath(path: string) { return /\.(png|jpe?g|gif|webp|pdf)$/i.test(path); }
   async function addPreviewPath(path: string, title?: string) {
@@ -460,7 +537,7 @@
       for (const path of initialPaths) await openPath(path);
       if (initialPaths.length > 0) await panelAction('show');
     })();
-    return () => { unlisten?.(); unlistenPaths?.(); unlistenQuit?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); window.removeEventListener('paste', openPastedFiles); window.removeEventListener('blur', onWindowBlur); window.removeEventListener('focus', onWindowFocus); };
+    return () => { cleanupSeparatorDrag(); cleanupTabDrag(); unlisten?.(); unlistenPaths?.(); unlistenQuit?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); window.removeEventListener('paste', openPastedFiles); window.removeEventListener('blur', onWindowBlur); window.removeEventListener('focus', onWindowFocus); };
   });
 </script>
 <svelte:head><title>{t('appTitle')}</title></svelte:head>
@@ -471,8 +548,8 @@
     <button onclick={openTextFile}>{t('openFile')}</button>
     <button onclick={openPreviewFile}>{t('previewFile')}</button>
     <button onclick={saveActive} disabled={!activeTab || activeTab.kind === 'preview'} title={t('saveActiveTitle')}>{t('save')}{activeTab?.dirty ? ' ·' : ''}</button>
-    <button onclick={addSplit} disabled={session.groups.length >= 2} title={t('addSplitTitle')}>{t('split')}</button>
-    {#if session.groups.length > 1}<button onclick={toggleSplitOrientation} title={t('toggleSplitTitle')}>{splitOrientation() === 'vertical' ? t('splitHorizontal') : t('splitVertical')}</button>{/if}
+    <button onclick={addSplit} title={t('addSplitTitle')}>{t('split')}</button>
+    {#if session.groups.length > 1}<button onclick={toggleSplitOrientation} title={t('toggleSplitTitle')}>{session.splitOrientation === 'vertical' ? t('splitHorizontal') : t('splitVertical')}</button>{/if}
     <button onclick={closeSplit} disabled={session.groups.length <= 1} title={t('mergeTitle')}>{t('merge')}</button>
     <span class="toolbar-spacer"></span>
     <button onclick={openSearch} title={t('searchTitle')}>{t('search')}</button>
@@ -482,21 +559,41 @@
   {#if session.settings.showTabs}<nav class="tabs" class:compressed-tabs={session.settings.tabLayout === 'top' && session.settings.topTabBehavior === 'compress'} aria-label={t('tabsAria')}>
     {#each session.tabs as tab (tab.id)}
       <div class:active={tab.id === activeTab?.id} class="tab-wrap">
-        <button class="tab" draggable="true" ondragstart={(event) => startTabDrag(tab.id, event)} onclick={() => applyActivation(focusTab(session, tab.id))} ondblclick={(event) => { event.stopPropagation(); renameTab(tab.id); }} title={`${tab.filePath ?? tab.title}${t('tabDragHint')}`}>{tab.dirty ? '● ' : ''}{tab.title}{tab.kind === 'preview' ? ` · ${t('previewSuffix')}` : ''}</button>
+        <button class="tab" draggable="true" ondragstart={(event) => startTabDrag(tab.id, event)} ondragend={cleanupTabDrag} onclick={() => applyActivation(focusTab(session, tab.id))} ondblclick={(event) => { event.stopPropagation(); renameTab(tab.id); }} title={`${tab.filePath ?? tab.title}${t('tabDragHint')}`}>{tab.dirty ? '● ' : ''}{tab.title}{tab.kind === 'preview' ? ` · ${t('previewSuffix')}` : ''}</button>
         <button class="tab-close" aria-label={t('closeTabAria', { name: tab.title })} onclick={(event) => { event.stopPropagation(); closeTabById(tab.id); }}>×</button>
       </div>
     {/each}
     {#if session.tabs.length === 0}<button class="empty-tab" onclick={newTab}>{t('newTab')}</button>{/if}
     <button class="restore" onclick={restoreClosed} disabled={session.undoSlots.length === 0} title={session.undoSlots[0] ? `${session.undoSlots[0].tab.title} · ${session.undoSlots[0].reason === 'expired' ? t('expired') : t('closed')}` : t('noUndo')}>{t('restoreClosed')}{session.undoSlots.length ? ` (${session.undoSlots.length})` : ''}</button>
   </nav>{/if}
-  <section class:split-workspace={session.groups.length > 1} class:split-horizontal={splitOrientation() === 'horizontal'} class="workspace" aria-label={t('workspaceAria')}>
-    {#each session.groups as group (group.id)}
+  <section bind:this={workspaceElement} class:split-workspace={session.groups.length > 1} class:split-horizontal={session.splitOrientation === 'horizontal'} class="workspace" aria-label={t('workspaceAria')}>
+    {#each session.groups as group, index (group.id)}
       {@const tab = groupTab(group)}
-      <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={t('groupAria', { id: group.id })} onpointerdown={() => { if (tab) applyActivation(focusTab(session, tab.id)); }} onfocusin={() => { if (tab) applyActivation(focusTab(session, tab.id)); }} ondragover={(event) => event.preventDefault()} ondrop={(event) => dropTabInGroup(group.id, event)}>
+      <section class="editor-group" style={groupStyle(group)} aria-label={t('groupAria', { id: group.id })} onpointerdown={() => { if (tab) applyActivation(focusTab(session, tab.id)); }} onfocusin={() => { if (tab) applyActivation(focusTab(session, tab.id)); }} ondragover={dragInternalTabOver} ondrop={(event) => dropTabInGroup(group.id, event)}>
         {#if tab}
           {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} onRefresh={() => refreshPreview(tab)} />{:else}<div class="editor-stack">{#if session.settings.showBreadcrumbs}<div class="breadcrumbs" title={tab.filePath ?? tab.title}>{tab.filePath ? tab.filePath.split('/').filter(Boolean).join(' › ') : tab.title}</div>{/if}{#key `${tab.id}:${tab.language}:${session.settings.fontSize}:${session.settings.shortcutProfile}:${shortcutOverridesFingerprint(session.settings.shortcutOverrides)}:${session.settings.showLineNumbers}:${session.settings.showMinimap}:${session.settings.showFolding}:${session.settings.showGlyphMargin}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} editorVisibility={{ showLineNumbers: session.settings.showLineNumbers, showMinimap: session.settings.showMinimap, showFolding: session.settings.showFolding, showGlyphMargin: session.settings.showGlyphMargin }} onChange={(content) => editContentFor(tab.id, content)} onStateChange={(editor) => editStateFor(tab.id, editor)} />{/key}{#if session.settings.showStatusBar}<div class="editor-status"><span>{tab.encoding?.toUpperCase() ?? 'UTF-8'} · {tab.lineEnding === '\r\n' ? 'CRLF' : tab.lineEnding === '\r' ? 'CR' : 'LF'}</span><label>{t('languageMode')}<select aria-label={t('languageMode')} value={tab.language} onchange={(event) => setLanguage(tab.id, event)}>{#each languageOptions as language}<option value={language}>{language}</option>{/each}</select></label></div>{/if}</div>{/if}
         {:else}<button class="empty" onclick={() => { const next = addTab(session, createTab(), group.id); applyActivation(next); }}>{t('newGroupTab')}</button>{/if}
       </section>
+      {#if index < session.groups.length - 1}
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
+        <div
+          class="group-separator"
+          role="separator"
+          tabindex="0"
+          aria-label={t('separatorAria', { leading: index + 1, trailing: index + 2 })}
+          title={t('separatorKeyboardHint')}
+          aria-orientation={session.splitOrientation === 'vertical' ? 'vertical' : 'horizontal'}
+          aria-valuemin={Math.round((separatorLeadingOffset(index) + MIN_GROUP_RATIO) * 1000) / 10}
+          aria-valuemax={Math.round((separatorLeadingOffset(index) + separatorPairWeight(index) - MIN_GROUP_RATIO) * 1000) / 10}
+          aria-valuenow={Math.round(separatorValue(index) * 1000) / 10}
+          onpointerdown={(event) => startSeparatorDrag(index, event)}
+          onpointermove={resizeFromPointer}
+          onpointerup={finishSeparatorDrag}
+          onpointercancel={finishSeparatorDrag}
+          onlostpointercapture={finishSeparatorDrag}
+          onkeydown={(event) => resizeSeparatorFromKeyboard(index, event)}
+        ></div>
+      {/if}
     {/each}
   </section>
   {#if notice}<div class="notice" role="status">{notice}</div>{/if}
@@ -539,7 +636,6 @@
         <label>{t('animationDuration')}<input type="number" min="50" max="1000" step="10" value={session.settings.panelAnimationDurationMs} onchange={(event) => void setAnimationOption('panelAnimationDurationMs', Math.max(50, Math.min(1000, Number((event.currentTarget as HTMLInputElement).value) || 180)))} /></label>
         <label>{t('tabLayout')}<select aria-label={t('tabLayout')} value={session.settings.tabLayout} onchange={setTabLayout}><option value="top">{t('tabTop')}</option><option value="left">{t('tabLeft')}</option><option value="right">{t('tabRight')}</option></select></label>
         {#if session.settings.tabLayout === 'top'}<label>{t('topTabBehavior')}<select aria-label={t('topTabBehavior')} value={session.settings.topTabBehavior} onchange={setTopTabBehavior}><option value="scroll">{t('tabScroll')}</option><option value="compress">{t('tabCompress')}</option></select></label>{/if}
-        {#if session.groups.length === 2}<label>{t('splitRatio')} <input aria-label={t('splitRatio')} type="range" min="0.2" max="0.8" step="0.05" value={splitRatio()} oninput={setSplitRatio} /></label>{/if}
         <fieldset class="shortcut-list"><legend>{t('customShortcuts')}</legend>{#each editorShortcutCommands as shortcut}<label>{shortcut.label}<input aria-label={t('shortcutAria', { name: shortcut.label })} placeholder={t('shortcutPlaceholder')} value={session.settings.shortcutOverrides[shortcut.id] ?? ''} onchange={(event) => setShortcutOverride(shortcut.id, event)} /></label>{/each}</fieldset>
         <label>{t('fontSize')} <span class="font-controls"><button onclick={() => changeFontSize(-1)}>−</button><output>{session.settings.fontSize}px</output><button onclick={() => changeFontSize(1)}>＋</button></span></label>
         <fieldset class="shortcut-list"><legend>{t('editorRegion')}</legend>
@@ -600,9 +696,15 @@
   .tabs .restore { margin-left: auto; font-size: 11px; }
   .empty-tab { border: 0; border-radius: 7px; padding: 5px 9px; color: var(--muted); background: transparent; }
   .workspace { min-height: 0; flex: 1; display: flex; }
-  .split-workspace { gap: 1px; background: color-mix(in srgb, var(--text) 12%, transparent); }
+  .split-workspace { background: color-mix(in srgb, var(--text) 12%, transparent); }
   .split-workspace.split-horizontal { flex-direction: column; }
-  .editor-group { min-width: 0; min-height: 0; flex: 1; display: flex; background: var(--panel); }
+  .editor-group { min-width: 0; min-height: 0; flex-shrink: 1; display: flex; background: var(--panel); }
+  .group-separator { position: relative; z-index: 1; flex: 0 0 6px; padding: 0; border: 0; cursor: col-resize; touch-action: none; outline: none; background: var(--panel); }
+  .group-separator::after { content: ''; position: absolute; inset: 0 2.5px; background: color-mix(in srgb, var(--text) 14%, transparent); transition: background .12s ease, inset .12s ease; }
+  .group-separator:hover::after, .group-separator:focus-visible::after { inset-inline: 2px; background: color-mix(in srgb, var(--text) 42%, transparent); }
+  .split-horizontal > .group-separator { cursor: row-resize; }
+  .split-horizontal > .group-separator::after { inset: 2.5px 0; }
+  .split-horizontal > .group-separator:hover::after, .split-horizontal > .group-separator:focus-visible::after { inset-block: 2px; }
   .editor-stack { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; }
   .breadcrumbs { flex: 0 0 auto; overflow: hidden; padding: 4px 10px; color: var(--muted); border-bottom: 1px solid color-mix(in srgb, var(--text) 8%, transparent); font: 11px/16px ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
   .editor-status { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 24px; padding: 2px 8px; color: var(--muted); border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent); font: 11px/16px ui-monospace, monospace; }
