@@ -90,7 +90,11 @@ impl EdgeTrigger {
             // Caps Lock is a persistent toggle, not an intentional edge
             // modifier. All other modifier bits must match exactly so that
             // e.g. Command+Shift does not trigger a Command-only binding.
-            let normalized_flags = flags & !NSEventModifierFlags::CapsLock;
+            let relevant_modifiers = NSEventModifierFlags::Command
+                | NSEventModifierFlags::Option
+                | NSEventModifierFlags::Control
+                | NSEventModifierFlags::Shift;
+            let normalized_flags = flags & relevant_modifiers;
             let modifier_down = normalized_flags == config.modifier;
             let mouse_location = NSEvent::mouseLocation();
             let edge = if modifier_down {
