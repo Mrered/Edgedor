@@ -18,8 +18,10 @@ import {
   serializeSettings,
   deserializeSettings,
   serializeSession,
-  touchTab
+  touchTab,
+  updateTab
 } from './model.ts';
+import { applySaveResult, captureSaveRequest } from './save.ts';
 import {
   SESSION_KEY,
   SETTINGS_KEY,
@@ -321,4 +323,38 @@ migratedStartup.values.set(SESSION_KEY, serializeSession(migratedSession));
 const migratedStartupState = readStartupState(migratedStartup);
 assert(migratedStartupState.session?.tabs[0]?.id === 'legacy-session', 'missing independent settings may migrate a valid legacy session');
 assert(migratedStartupState.settings.fontSize === 22 && migratedStartupState.settings.preserveOnRestart === true, 'legacy settings migration adopts settings but defaults recovery to enabled');
+
+let saveRaceState = createSessionState(start);
+saveRaceState = addTab(saveRaceState, createTab({ id: 'save-target', content: 'captured content', title: 'captured.ts', encoding: 'utf-16le', lineEnding: '\r\n', dirty: true, now: start }));
+saveRaceState = addTab(saveRaceState, createTab({ id: 'other-tab', content: 'other content', now: start + 1 }));
+saveRaceState = focusTab(saveRaceState, 'save-target', start + 2);
+const saveRequest = captureSaveRequest(saveRaceState.tabs.find((candidate) => candidate.id === 'save-target')!);
+assert(Object.isFrozen(saveRequest), 'captures an immutable save request');
+assert(saveRequest.tabId === 'save-target' && saveRequest.content === 'captured content' && saveRequest.encoding === 'utf-16le' && saveRequest.lineEnding === '\r\n', 'captures save content and metadata at invocation time');
+assert(saveRequest.title === 'captured.ts' && saveRequest.kind === 'temporary' && saveRequest.filePath === undefined, 'captures save naming and binding at invocation time');
+
+const switchedBeforeSave = focusTab(saveRaceState, 'other-tab', start + 3);
+const savedAfterSwitch = applySaveResult(switchedBeforeSave, saveRequest, '/tmp/result.ts');
+const savedTarget = savedAfterSwitch.tabs.find((candidate) => candidate.id === 'save-target');
+assert(savedAfterSwitch.activeGroupId === switchedBeforeSave.activeGroupId && savedAfterSwitch.groups[0]?.activeTabId === 'other-tab', 'saving after a tab switch preserves the current activation');
+assert(savedTarget?.filePath === '/tmp/result.ts' && savedTarget.kind === 'file' && savedTarget.title === 'result.ts' && savedTarget.manuallyNamed === true, 'binds only the captured tab to the saved path');
+assert(savedTarget?.dirty === false && savedAfterSwitch.tabs.find((candidate) => candidate.id === 'other-tab')?.content === 'other content', 'clears dirty only for an unchanged captured tab');
+
+for (const [field, value] of [['content', 'edited later'], ['encoding', 'gb18030'], ['lineEnding', '\n']] as const) {
+  const changedState = updateTab(saveRaceState, 'save-target', { [field]: value });
+  const merged = applySaveResult(changedState, saveRequest, '/tmp/result.ts');
+  const changedTab = merged.tabs.find((candidate) => candidate.id === 'save-target');
+  assert(changedTab?.[field] === value, `preserves asynchronously changed ${field}`);
+  assert(changedTab?.dirty === true, `keeps dirty when ${field} changed during save`);
+}
+
+const closedDuringSave = closeTab(saveRaceState, 'save-target', start + 4);
+const closedMerge = applySaveResult(closedDuringSave, saveRequest, '/tmp/result.ts');
+assert(closedMerge === closedDuringSave && !closedMerge.tabs.some((candidate) => candidate.id === 'save-target'), 'does not revive a tab closed during save');
+
+const boundState = updateTab(saveRaceState, 'save-target', { kind: 'file', filePath: '/tmp/original.ts' });
+const boundRequest = captureSaveRequest(boundState.tabs.find((candidate) => candidate.id === 'save-target')!);
+const boundResult = applySaveResult(boundState, boundRequest, boundRequest.filePath!);
+assert(boundResult.tabs.find((candidate) => candidate.id === 'save-target')?.filePath === '/tmp/original.ts', 'uses the same merge path for an already bound file');
+assert(applySaveResult(saveRaceState, saveRequest, '/tmp/new-name.ts').tabs.find((candidate) => candidate.id === 'save-target')?.title === 'new-name.ts', 'binds a temporary tab using the chosen file name');
 console.log('Edgedor session self-check passed');
