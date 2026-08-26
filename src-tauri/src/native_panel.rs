@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use objc2::runtime::AnyObject;
 use objc2::{sel, MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSAutoresizingMaskOptions, NSBackingStoreType, NSEvent, NSEventMask, NSEventModifierFlags, NSMenu, NSMenuItem, NSPanel, NSStatusBar, NSView, NSWindowStyleMask, NSWindowTitleVisibility, NSFloatingWindowLevel, NSScreen};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSAutoresizingMaskOptions, NSBackingStoreType, NSEvent, NSEventMask, NSEventModifierFlags, NSMenu, NSMenuItem, NSPanel, NSStatusBar, NSView, NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowTitleVisibility, NSFloatingWindowLevel, NSScreen};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString, NSTimer};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
@@ -95,7 +95,11 @@ impl NativePanel {
         let app = app.clone();
         let modifier = *self.edge_modifier.lock().map_err(|_| "edge modifier state unavailable")?;
         self.trigger.start(edge_trigger::EdgeTriggerConfig { modifier, ..Default::default() }, move |_edge| {
-            if let Some(panel) = app.try_state::<NativePanel>() { let _ = panel.show_at_edge(_edge); }
+            if let Some(panel) = app.try_state::<NativePanel>() {
+                if let Err(error) = panel.show_at_edge(_edge) {
+                    eprintln!("Edgedor edge panel show failed: {error}");
+                }
+            }
         })
     }
 
@@ -119,12 +123,17 @@ impl NativePanel {
         eprintln!("Edgedor edge trigger fired: {edge:?}");
         let panel = self.create()?;
         let marker = MainThreadMarker::new().ok_or("NSPanel must be shown on the main thread")?;
+        let application = NSApplication::sharedApplication(marker);
+        #[allow(deprecated)]
+        application.activateIgnoringOtherApps(true);
         let screen = screen_at(NSEvent::mouseLocation(), marker)
             .or_else(|| NSScreen::mainScreen(marker))
             .ok_or("no screen available")?;
         let frame = screen.visibleFrame();
         let current_width = panel.frame().size.width;
-        let ratio = if current_width > 1.0 && panel.isVisible() {
+        let was_visible = panel.isVisible();
+        let was_on_active_space = panel.isOnActiveSpace();
+        let ratio = if current_width > 1.0 && was_visible && was_on_active_space {
             (current_width / frame.size.width).clamp(0.20, 0.60)
         } else {
             0.35
@@ -145,6 +154,20 @@ impl NativePanel {
         panel.orderFrontRegardless();
         panel.makeKeyAndOrderFront(None::<&AnyObject>);
         animate_panel_frame(panel, start, target, false);
+        eprintln!(
+            "Edgedor edge panel shown: edge={edge:?} app_active={} was_visible={was_visible} was_on_active_space={was_on_active_space} visible={} on_active_space={} target=({:.0},{:.0},{:.0},{:.0}) actual=({:.0},{:.0},{:.0},{:.0})",
+            application.isActive(),
+            panel.isVisible(),
+            panel.isOnActiveSpace(),
+            target.origin.x,
+            target.origin.y,
+            target.size.width,
+            target.size.height,
+            panel.frame().origin.x,
+            panel.frame().origin.y,
+            panel.frame().size.width,
+            panel.frame().size.height,
+        );
         Ok(())
     }
 
@@ -174,7 +197,13 @@ impl NativePanel {
         panel.setTitlebarAppearsTransparent(true);
         panel.setBecomesKeyOnlyIfNeeded(false);
         panel.setFloatingPanel(true);
-        panel.setHidesOnDeactivate(!*self.pinned.lock().map_err(|_| "native panel state unavailable")?);
+        panel.setHidesOnDeactivate(false);
+        panel.setCollectionBehavior(
+            NSWindowCollectionBehavior::CanJoinAllSpaces
+                | NSWindowCollectionBehavior::FullScreenAuxiliary
+                | NSWindowCollectionBehavior::Transient
+                | NSWindowCollectionBehavior::IgnoresCycle,
+        );
         panel.setLevel(NSFloatingWindowLevel);
         let pointer = RetainedPanel::leak(panel);
         *self.panel.lock().map_err(|_| "native panel state unavailable")? = Some(pointer);
@@ -222,13 +251,12 @@ impl NativePanel {
 
     pub fn set_pinned(&self, pinned: bool) -> Result<(), String> {
         *self.pinned.lock().map_err(|_| "native panel state unavailable")? = pinned;
-        if let Some(panel) = self.panel() { panel.setHidesOnDeactivate(!pinned); }
         Ok(())
     }
 
     /// Install an AppKit global monitor so clicks outside the panel dismiss it.
-    /// `setHidesOnDeactivate` handles normal app deactivation, while this monitor
-    /// also covers clicks in another app when the panel is a floating window.
+    /// The panel must remain visible while Edgedor activates across applications,
+    /// so this monitor is the single owner of unpinned dismissal behavior.
     pub fn install_dismiss_monitor(&self) -> Result<(), String> {
         if self.dismiss_monitor.lock().map_err(|_| "dismiss monitor state unavailable")?.is_some() {
             return Ok(());
