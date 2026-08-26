@@ -8,17 +8,46 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
+use objc2::rc::Retained;
 use objc2::runtime::AnyObject;
-use objc2::{sel, MainThreadMarker, MainThreadOnly};
+use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSAutoresizingMaskOptions, NSBackingStoreType, NSEvent, NSEventMask, NSEventModifierFlags, NSMenu, NSMenuItem, NSPanel, NSStatusBar, NSView, NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowTitleVisibility, NSFloatingWindowLevel, NSNormalWindowLevel, NSScreen};
-use objc2_foundation::{NSPoint, NSRect, NSSize, NSString, NSTimer, NSUserDefaults};
-use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
+use objc2_foundation::{NSObject, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSTimer, NSUserDefaults};
+use tauri::{AppHandle, Manager, WebviewWindow};
 
 const DEFAULT_PANEL_ANIMATION_MS: u64 = 180;
 const PANEL_WIDTH_RATIO_KEY: &str = "EdgedorPanelWidthRatio";
+static MENU_APP: OnceLock<AppHandle> = OnceLock::new();
+
+define_class!(
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[ivars = ()]
+    struct EdgedorMenuTarget;
+
+    unsafe impl NSObjectProtocol for EdgedorMenuTarget {}
+
+    impl EdgedorMenuTarget {
+        #[unsafe(method(showEdgedor:))]
+        fn show_edgedor(&self, _sender: Option<&AnyObject>) {
+            if let Some(app) = MENU_APP.get() {
+                if let Err(error) = crate::apply_panel_action(app, "show", None) {
+                    eprintln!("Edgedor menu show failed: {error}");
+                }
+            }
+        }
+    }
+);
+
+impl EdgedorMenuTarget {
+    fn new(marker: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(marker).set_ivars(());
+        unsafe { msg_send![super(this), init] }
+    }
+}
 
 #[path = "edge_trigger.rs"]
 pub mod edge_trigger;
@@ -38,6 +67,7 @@ pub struct NativePanel {
     last_target: Mutex<Option<(f64, f64, f64, f64)>>,
     current_edge: Arc<Mutex<Option<edge_trigger::Edge>>>,
     status_item: Mutex<Option<usize>>,
+    menu_target: Mutex<Option<usize>>,
     dismiss_monitor: Mutex<Option<usize>>,
 }
 
@@ -58,6 +88,7 @@ impl Default for NativePanel {
             last_target: Mutex::new(None),
             current_edge: Arc::new(Mutex::new(None)),
             status_item: Mutex::new(None),
+            menu_target: Mutex::new(None),
             dismiss_monitor: Mutex::new(None),
         }
     }
@@ -75,21 +106,29 @@ impl NativePanel {
         if NSApplication::sharedApplication(marker).setActivationPolicy(policy) { Ok(()) } else { Err("unable to set Dock icon policy".into()) }
     }
 
-    pub fn install_status_item(&self) -> Result<(), String> {
+    pub fn install_status_item(&self, app: &AppHandle) -> Result<(), String> {
         if self.status_item.lock().map_err(|_| "status item state unavailable")?.is_some() { return Ok(()); }
+        let _ = MENU_APP.set(app.clone());
         let marker = MainThreadMarker::new().ok_or("status item must be created on the main thread")?;
-        let panel = self.create()?;
+        let target_pointer = {
+            let mut stored = self.menu_target.lock().map_err(|_| "menu target state unavailable")?;
+            if stored.is_none() {
+                *stored = Some(RetainedPanel::leak_menu_target(EdgedorMenuTarget::new(marker)));
+            }
+            stored.ok_or("menu target unavailable")?
+        };
+        let target = unsafe { &*(target_pointer as *const EdgedorMenuTarget) };
         let item = NSStatusBar::systemStatusBar().statusItemWithLength(-2.0);
         let menu = NSMenu::initWithTitle(NSMenu::alloc(marker), &NSString::from_str("Edgedor"));
         let show_item = unsafe {
             NSMenuItem::initWithTitle_action_keyEquivalent(
                 NSMenuItem::alloc(marker),
                 &NSString::from_str("显示 Edgedor"),
-                Some(sel!(makeKeyAndOrderFront:)),
+                Some(sel!(showEdgedor:)),
                 &NSString::from_str(""),
             )
         };
-        unsafe { show_item.setTarget(Some(panel as &AnyObject)); }
+        unsafe { show_item.setTarget(Some(target as &AnyObject)); }
         menu.addItem(&show_item);
         menu.addItem(&NSMenuItem::separatorItem(marker));
         let quit_item = unsafe {
@@ -109,8 +148,8 @@ impl NativePanel {
         Ok(())
     }
 
-    pub fn set_status_item_visible(&self, visible: bool) -> Result<(), String> {
-        if visible { return self.install_status_item(); }
+    pub fn set_status_item_visible(&self, visible: bool, app: &AppHandle) -> Result<(), String> {
+        if visible { return self.install_status_item(app); }
         let mut item = self.status_item.lock().map_err(|_| "status item state unavailable")?;
         if let Some(pointer) = item.take() {
             let status_bar = NSStatusBar::systemStatusBar();
@@ -132,14 +171,15 @@ impl NativePanel {
             left_enabled,
             right_enabled,
             ..Default::default()
-        }, move |_edge, point| {
-            if let Some(panel) = app.try_state::<NativePanel>() {
-                if let Err(error) = panel.show_at_edge_at(_edge, point) {
-                    eprintln!("Edgedor edge panel show failed: {error}");
-                } else {
-                    let trigger_edge = match _edge { edge_trigger::Edge::Left => "left", edge_trigger::Edge::Right => "right" };
-                    let _ = app.emit("panel_status", serde_json::json!({"visible": true, "focused": true, "bridgeReady": true, "triggerEdge": trigger_edge}));
-                }
+        }, move |edge, point| {
+            let Some(panel) = app.try_state::<NativePanel>() else { return };
+            if let Err(error) = panel.show_at_edge_at(edge, point) {
+                eprintln!("Edgedor edge panel show failed: {error}");
+                return;
+            }
+            let trigger_edge = match edge { edge_trigger::Edge::Left => "left", edge_trigger::Edge::Right => "right" };
+            if let Err(error) = crate::publish_panel_action(&app, "show", Some(trigger_edge), (true, true)) {
+                eprintln!("Edgedor edge panel status update failed: {error}");
             }
         })
     }
@@ -398,13 +438,13 @@ impl NativePanel {
                 #[allow(deprecated)]
                 NSApplication::sharedApplication(marker).activateIgnoringOtherApps(true);
                 panel.setLevel(NSFloatingWindowLevel);
-                if let Ok(last_target) = self.last_target.lock() {
-                    if let Some((x, y, width, height)) = *last_target {
-                        panel.setFrame_display(NSRect::new(NSPoint::new(x, y), NSSize::new(width, height)), false);
-                    }
-                }
+                let target = self.resolved_show_target(marker)?;
+                panel.setFrame_display(target, false);
                 panel.orderFrontRegardless();
                 panel.makeKeyAndOrderFront(None::<&AnyObject>);
+                if let Ok(mut current_edge) = self.current_edge.lock() {
+                    *current_edge = None;
+                }
                 Ok((true, true))
             }
             "focus" => {
@@ -417,6 +457,9 @@ impl NativePanel {
                 let animation_enabled = self.animation_enabled.lock().map(|value| *value).unwrap_or(true);
                 let animation_duration_ms = self.animation_duration_ms.lock().map(|value| *value).unwrap_or(DEFAULT_PANEL_ANIMATION_MS);
                 animate_panel_out(panel, animation_enabled, animation_duration_ms, Arc::clone(&self.animation_generation));
+                if let Ok(mut current_edge) = self.current_edge.lock() {
+                    *current_edge = None;
+                }
                 Ok((false, false))
             }
             "lower" => {
@@ -452,24 +495,14 @@ impl NativePanel {
         if self.dismiss_monitor.lock().map_err(|_| "dismiss monitor state unavailable")?.is_some() {
             return Ok(());
         }
-        let panel = self.create()? as *const NSPanel as usize;
-        let pinned = self.pinned.clone();
-        let width_ratio = self.width_ratio.clone();
-        let animation_enabled = self.animation_enabled.clone();
-        let animation_duration_ms = self.animation_duration_ms.clone();
-        let animation_generation = self.animation_generation.clone();
+        self.create()?;
         let app = app.clone();
         let block = block2::RcBlock::new(move |_event: std::ptr::NonNull<NSEvent>| {
-            if pinned.lock().map(|value| *value).unwrap_or(true) {
-                return;
-            }
-            let panel = unsafe { &*(panel as *const NSPanel) };
-            if panel.isVisible() {
-                capture_width_ratio(panel, &width_ratio);
-                let enabled = animation_enabled.lock().map(|value| *value).unwrap_or(true);
-                let duration_ms = animation_duration_ms.lock().map(|value| *value).unwrap_or(DEFAULT_PANEL_ANIMATION_MS);
-                animate_panel_out(panel, enabled, duration_ms, Arc::clone(&animation_generation));
-                let _ = app.emit("panel_status", serde_json::json!({"visible": false, "focused": false, "bridgeReady": true}));
+            let Some(panel) = app.try_state::<NativePanel>() else { return };
+            if panel.pinned.lock().map(|value| *value).unwrap_or(true) { return; }
+            if !panel.panel().is_some_and(|window| window.isVisible()) { return; }
+            if let Err(error) = crate::apply_panel_action(&app, "hide", None) {
+                eprintln!("Edgedor global dismiss failed: {error}");
             }
         });
         let token = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
@@ -480,6 +513,39 @@ impl NativePanel {
         *self.dismiss_monitor.lock().map_err(|_| "dismiss monitor state unavailable")? =
             Some(RetainedPanel::leak_event_monitor(token));
         Ok(())
+    }
+
+    fn resolved_show_target(&self, marker: MainThreadMarker) -> Result<NSRect, String> {
+        if let Ok(last_target) = self.last_target.lock() {
+            if let Some((x, y, width, height)) = *last_target {
+                let target = NSRect::new(NSPoint::new(x, y), NSSize::new(width, height));
+                let center = NSPoint::new(x + width / 2.0, y + height / 2.0);
+                if width.is_finite() && width > 0.0 && height.is_finite() && height > 0.0 {
+                    if let Some(screen) = screen_at(center, marker) {
+                        let visible = screen.visibleFrame();
+                        let fits = x >= visible.origin.x
+                            && y >= visible.origin.y
+                            && x + width <= visible.origin.x + visible.size.width
+                            && y + height <= visible.origin.y + visible.size.height;
+                        if fits {
+                            return Ok(target);
+                        }
+                    }
+                }
+            }
+        }
+        let screen = NSScreen::mainScreen(marker).ok_or("no screen available")?;
+        let frame = screen.visibleFrame();
+        let ratio = self.width_ratio.lock().map(|ratio| *ratio).unwrap_or(0.35).clamp(0.20, 0.60);
+        let width = (frame.size.width * ratio).clamp(320.0, frame.size.width * 0.60);
+        let target = NSRect::new(
+            NSPoint::new(frame.origin.x + frame.size.width - width, frame.origin.y),
+            NSSize::new(width, frame.size.height),
+        );
+        if let Ok(mut last_target) = self.last_target.lock() {
+            *last_target = Some((target.origin.x, target.origin.y, target.size.width, target.size.height));
+        }
+        Ok(target)
     }
 }
 
@@ -572,12 +638,22 @@ fn saved_width_ratio() -> f64 {
 }
 
 fn capture_width_ratio(panel: &NSPanel, width_ratio: &Arc<Mutex<f64>>) {
+    if !panel.isVisible() { return; }
     let marker = match MainThreadMarker::new() { Some(marker) => marker, None => return };
     let panel_frame = panel.frame();
+    if !panel_frame.origin.x.is_finite()
+        || !panel_frame.origin.y.is_finite()
+        || !panel_frame.size.width.is_finite()
+        || !panel_frame.size.height.is_finite()
+        || panel_frame.size.width <= 0.0
+        || panel_frame.size.height <= 0.0
+    {
+        return;
+    }
     let center = NSPoint::new(panel_frame.origin.x + panel_frame.size.width / 2.0, panel_frame.origin.y + panel_frame.size.height / 2.0);
-    let Some(screen) = screen_at(center, marker).or_else(|| NSScreen::mainScreen(marker)) else { return };
+    let Some(screen) = screen_at(center, marker) else { return };
     let available_width = screen.visibleFrame().size.width;
-    if available_width <= 1.0 { return; }
+    if !available_width.is_finite() || available_width <= 1.0 { return; }
     let ratio = (panel_frame.size.width / available_width).clamp(0.20, 0.60);
     if let Ok(mut stored_ratio) = width_ratio.lock() { *stored_ratio = ratio; }
     NSUserDefaults::standardUserDefaults().setDouble_forKey(ratio, &NSString::from_str(PANEL_WIDTH_RATIO_KEY));
@@ -601,6 +677,10 @@ impl RetainedPanel {
 
     fn leak_event_monitor(item: objc2::rc::Retained<AnyObject>) -> usize {
         objc2::rc::Retained::into_raw(item) as usize
+    }
+
+    fn leak_menu_target(item: Retained<EdgedorMenuTarget>) -> usize {
+        Retained::into_raw(item) as usize
     }
 }
 

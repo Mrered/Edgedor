@@ -223,7 +223,7 @@ fn startup_paths() -> Vec<String> { std::env::args().skip(1).filter(|path| !path
 #[tauri::command]
 fn set_menu_bar_icon_visible(visible: bool, app: AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
-    { app.state::<native_panel::NativePanel>().set_status_item_visible(visible)?; }
+    { app.state::<native_panel::NativePanel>().set_status_item_visible(visible, &app)?; }
     Ok(())
 }
 
@@ -266,26 +266,50 @@ fn set_panel_animation(enabled: bool, duration_ms: u64, app: AppHandle) -> Resul
 }
 
 #[tauri::command]
-fn panel_action(action: &str, app: AppHandle, state: State<'_, PanelState>) -> Result<PanelStatus, String> {
+fn panel_action(action: &str, app: AppHandle, _state: State<'_, PanelState>) -> Result<PanelStatus, String> {
+    apply_panel_action(&app, action, None)
+}
+
+pub(crate) fn apply_panel_action(app: &AppHandle, action: &str, trigger_edge: Option<&str>) -> Result<PanelStatus, String> {
     if !matches!(action, "show" | "focus" | "hide" | "lower") {
         return Err("unsupported panel action".into());
     }
-    let mut status = state.0.lock().map_err(|_| "panel state unavailable")?;
     #[cfg(target_os = "macos")]
     let native_result = app.state::<native_panel::NativePanel>().action(action)?;
     #[cfg(not(target_os = "macos"))]
-    let native_result = match action {
-        "show" | "focus" => (true, true),
-        "hide" => (false, false),
-        "lower" => (status.visible, false),
-        _ => unreachable!(),
+    let native_result = {
+        let visible = app.state::<PanelState>().0.lock().map_err(|_| "panel state unavailable")?.visible;
+        match action {
+            "show" | "focus" => (true, true),
+            "hide" => (false, false),
+            "lower" => (visible, false),
+            _ => unreachable!(),
+        }
     };
-    (status.visible, status.focused) = native_result;
-    if matches!(action, "show" | "hide") {
-        status.trigger_edge = None;
+
+    publish_panel_action(app, action, trigger_edge, native_result)
+}
+
+pub(crate) fn publish_panel_action(
+    app: &AppHandle,
+    action: &str,
+    trigger_edge: Option<&str>,
+    native_result: (bool, bool),
+) -> Result<PanelStatus, String> {
+    let next = {
+        let state = app.state::<PanelState>();
+        let mut status = state.0.lock().map_err(|_| "panel state unavailable")?;
+        (status.visible, status.focused) = native_result;
+        if let Some(edge) = trigger_edge {
+            status.trigger_edge = Some(edge.to_string());
+        } else if matches!(action, "show" | "hide") {
+            status.trigger_edge = None;
+        }
+        status.clone()
+    };
+    if let Err(error) = app.emit("panel_status", next.clone()) {
+        eprintln!("Edgedor panel status delivery failed after {action}: {error}");
     }
-    let next = status.clone();
-    app.emit("panel_status", next.clone()).map_err(|error| error.to_string())?;
     Ok(next)
 }
 
@@ -301,12 +325,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             let paths: Vec<String> = args.into_iter().skip(1).filter(|path| !path.starts_with('-')).collect();
             if !paths.is_empty() { let _ = app.emit("open_paths", paths); }
-            #[cfg(target_os = "macos")]
-            if let Some(panel) = app.try_state::<native_panel::NativePanel>() {
-                let _ = panel.action("show");
-            }
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_focus();
+            if let Err(error) = apply_panel_action(app, "show", None) {
+                eprintln!("Edgedor single-instance show failed: {error}");
             }
         }))
         .plugin(tauri_plugin_opener::init())
@@ -320,10 +340,12 @@ pub fn run() {
             {
                 let panel = app.state::<native_panel::NativePanel>();
                 let _ = native_panel::NativePanel::set_accessory_activation_policy();
-                let _ = panel.install_status_item();
+                let _ = panel.install_status_item(app.handle());
                 native_panel::attach_from_setup(app.handle(), &panel)
                     .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
-                let _ = panel.action("hide");
+                if let Err(error) = apply_panel_action(app.handle(), "hide", None) {
+                    eprintln!("Edgedor initial panel hide failed: {error}");
+                }
                 panel.install_dismiss_monitor(app.handle())
                     .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
                 if let Err(error) = panel.start_edge_trigger(app.handle()) {
