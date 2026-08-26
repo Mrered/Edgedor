@@ -1,6 +1,8 @@
 export const SESSION_VERSION = 1;
 export const TAB_EXPIRY_MS = 24 * 60 * 60 * 1000;
 export const MAX_UNDO_SLOTS = 10;
+export const MAX_EDITOR_GROUPS = 4;
+export const MIN_GROUP_RATIO = 0.1;
 
 export type TabKind = 'temporary' | 'file' | 'preview';
 export type SplitOrientation = 'horizontal' | 'vertical';
@@ -37,9 +39,7 @@ export interface SessionTab {
 
 export interface EditorGroup {
   id: string;
-  parentId?: string;
-  orientation?: SplitOrientation;
-  splitRatio?: number;
+  splitRatio: number;
   tabIds: string[];
   activeTabId?: string;
 }
@@ -81,6 +81,7 @@ export interface SessionState {
   tabs: SessionTab[];
   groups: EditorGroup[];
   activeGroupId: string;
+  splitOrientation: SplitOrientation;
   undoSlots: UndoSlot[];
   settings: SessionSettings;
 }
@@ -168,15 +169,30 @@ export function createTab(input: NewTabInput = {}): SessionTab {
 }
 
 export function createSessionState(now = Date.now()): SessionState {
-  const group: EditorGroup = { id: 'group-1', tabIds: [], activeTabId: undefined };
+  const group: EditorGroup = { id: 'group-1', splitRatio: 1, tabIds: [], activeTabId: undefined };
   return {
     version: SESSION_VERSION,
     tabs: [],
     groups: [group],
     activeGroupId: group.id,
+    splitOrientation: 'vertical',
     undoSlots: [],
     settings: { ...DEFAULT_SESSION_SETTINGS, shortcutOverrides: { ...DEFAULT_SESSION_SETTINGS.shortcutOverrides } }
   };
+}
+
+function normalizeGroupRatios(groups: EditorGroup[]): EditorGroup[] {
+  if (groups.length === 0) return groups;
+  const rawRatios = groups.map((group) => Number.isFinite(group.splitRatio) && group.splitRatio > 0 ? group.splitRatio : MIN_GROUP_RATIO);
+  const excess = rawRatios.map((ratio) => Math.max(0, ratio - MIN_GROUP_RATIO));
+  const available = 1 - groups.length * MIN_GROUP_RATIO;
+  const excessTotal = excess.reduce((sum, ratio) => sum + ratio, 0);
+  const ratios = excessTotal > 0
+    ? excess.map((ratio) => MIN_GROUP_RATIO + available * ratio / excessTotal)
+    : groups.map(() => 1 / groups.length);
+  const correction = 1 - ratios.reduce((sum, ratio) => sum + ratio, 0);
+  ratios[ratios.length - 1] += correction;
+  return groups.map((group, index) => ({ ...group, splitRatio: ratios[index] }));
 }
 
 export function addTab(state: SessionState, tab: SessionTab, groupId = state.activeGroupId): SessionState {
@@ -193,33 +209,72 @@ export function addTab(state: SessionState, tab: SessionTab, groupId = state.act
   };
 }
 
-export function createGroup(state: SessionState, orientation: SplitOrientation = 'vertical', splitRatio = 0.5, id = newId()): SessionState {
-  const parentId = state.activeGroupId;
-  const clampedRatio = Math.max(0.2, Math.min(0.8, splitRatio));
-  const group: EditorGroup = { id, parentId, orientation, splitRatio: clampedRatio, tabIds: [], activeTabId: undefined };
-  return { ...state, groups: [...state.groups, group], activeGroupId: group.id };
+export function createGroup(state: SessionState, orientation: SplitOrientation = state.splitOrientation, _splitRatio = 0.5, id = newId()): SessionState {
+  if (state.groups.length >= MAX_EDITOR_GROUPS) return state;
+  const activeIndex = state.groups.findIndex((group) => group.id === state.activeGroupId);
+  if (activeIndex < 0) return state;
+  const groupId = state.groups.some((group) => group.id === id) ? newId() : id;
+  const groups = normalizeGroupRatios(state.groups);
+  const activeRatio = groups[activeIndex].splitRatio;
+  const nextGroups = groups.map((group, index) => index === activeIndex ? { ...group, splitRatio: activeRatio / 2 } : group);
+  nextGroups.splice(activeIndex + 1, 0, { id: groupId, splitRatio: activeRatio / 2, tabIds: [], activeTabId: undefined });
+  return {
+    ...state,
+    groups: normalizeGroupRatios(nextGroups),
+    activeGroupId: groupId,
+    splitOrientation: orientation
+  };
 }
 
 export function removeGroup(state: SessionState, groupId: string): SessionState {
   if (state.groups.length <= 1) return state;
-  const group = state.groups.find((candidate) => candidate.id === groupId);
-  if (!group) return state;
-  const fallback = state.groups.find((candidate) => candidate.id !== groupId);
-  if (!fallback) return state;
-  const movedTabs = state.tabs.map((tab) => tab.groupId === groupId ? { ...tab, groupId: fallback.id } : tab);
+  const groupIndex = state.groups.findIndex((candidate) => candidate.id === groupId);
+  if (groupIndex < 0) return state;
+  const groups = normalizeGroupRatios(state.groups);
+  const group = groups[groupIndex];
+  const receiverIndex = groupIndex < groups.length - 1 ? groupIndex + 1 : groupIndex - 1;
+  const receiver = groups[receiverIndex];
+  const removingActiveGroup = state.activeGroupId === groupId;
+  const movedTabs = state.tabs.map((tab) => tab.groupId === groupId ? { ...tab, groupId: receiver.id } : tab);
+  const mergedTabIds = [...receiver.tabIds, ...group.tabIds.filter((tabId) => !receiver.tabIds.includes(tabId))];
+  const removedActiveTabId = group.activeTabId && group.tabIds.includes(group.activeTabId) ? group.activeTabId : undefined;
+  const receiverActiveTabId = removingActiveGroup
+    ? removedActiveTabId ?? (receiver.activeTabId && mergedTabIds.includes(receiver.activeTabId) ? receiver.activeTabId : mergedTabIds.at(-1))
+    : receiver.activeTabId;
+  const remainingGroups = groups
+    .filter((candidate) => candidate.id !== groupId)
+    .map((candidate) => candidate.id === receiver.id
+      ? { ...candidate, splitRatio: candidate.splitRatio + group.splitRatio, tabIds: mergedTabIds, activeTabId: receiverActiveTabId }
+      : candidate);
   return {
     ...state,
     tabs: movedTabs,
-    groups: state.groups.filter((candidate) => candidate.id !== groupId).map((candidate) => candidate.id === fallback.id
-      ? { ...candidate, tabIds: [...candidate.tabIds, ...group.tabIds], activeTabId: candidate.activeTabId ?? group.activeTabId }
-      : candidate),
-    activeGroupId: state.activeGroupId === groupId ? fallback.id : state.activeGroupId
+    groups: normalizeGroupRatios(remainingGroups),
+    activeGroupId: removingActiveGroup ? receiver.id : state.activeGroupId
   };
 }
 
 export function setGroupRatio(state: SessionState, groupId: string, splitRatio: number): SessionState {
-  const clampedRatio = Math.max(0.2, Math.min(0.8, splitRatio));
-  return { ...state, groups: state.groups.map((group) => group.id === groupId ? { ...group, splitRatio: clampedRatio } : group) };
+  const groupIndex = state.groups.findIndex((group) => group.id === groupId);
+  if (groupIndex < 0 || state.groups.length < 2) return state;
+  const separatorIndex = groupIndex === state.groups.length - 1 ? groupIndex - 1 : groupIndex;
+  return resizeAdjacentGroups(state, separatorIndex, groupIndex === separatorIndex ? splitRatio : (state.groups[separatorIndex].splitRatio + state.groups[groupIndex].splitRatio - splitRatio));
+}
+
+export function resizeAdjacentGroups(state: SessionState, separatorIndex: number, leadingWeight: number): SessionState {
+  if (!Number.isInteger(separatorIndex) || separatorIndex < 0 || separatorIndex >= state.groups.length - 1 || !Number.isFinite(leadingWeight)) return state;
+  const groups = normalizeGroupRatios(state.groups);
+  const pairWeight = groups[separatorIndex].splitRatio + groups[separatorIndex + 1].splitRatio;
+  if (pairWeight < MIN_GROUP_RATIO * 2) return state;
+  const nextLeading = Math.max(MIN_GROUP_RATIO, Math.min(pairWeight - MIN_GROUP_RATIO, leadingWeight));
+  return {
+    ...state,
+    groups: groups.map((group, index) => {
+      if (index === separatorIndex) return { ...group, splitRatio: nextLeading };
+      if (index === separatorIndex + 1) return { ...group, splitRatio: pairWeight - nextLeading };
+      return group;
+    })
+  };
 }
 
 export function focusTab(state: SessionState, tabId: string, now = Date.now()): SessionState {
@@ -328,7 +383,13 @@ export function serializeSession(state: SessionState): string {
   const tabs = state.tabs.map((tab) => tab.kind === 'preview'
     ? { ...tab, content: '', previewDataUrl: undefined }
     : tab);
-  return JSON.stringify({ ...state, tabs, undoSlots: [], version: SESSION_VERSION });
+  const groups = normalizeGroupRatios(state.groups).map((group) => ({
+    id: group.id,
+    splitRatio: group.splitRatio,
+    tabIds: group.tabIds,
+    activeTabId: group.activeTabId
+  }));
+  return JSON.stringify({ ...state, tabs, groups, undoSlots: [], version: SESSION_VERSION });
 }
 
 export function serializeSettings(settings: SessionSettings): string {
@@ -375,11 +436,104 @@ function normalizeSettings(input: Partial<SessionSettings>): SessionSettings {
 
 export function deserializeSession(serialized: string): SessionState | undefined {
   try {
-    const parsed = JSON.parse(serialized) as SessionState;
+    const parsed = JSON.parse(serialized) as Record<string, unknown>;
     if (parsed?.version !== SESSION_VERSION || !Array.isArray(parsed.tabs) || !Array.isArray(parsed.groups)) return undefined;
-    parsed.settings = normalizeSettings(parsed.settings ?? {});
-    parsed.undoSlots = [];
-    return parsed;
+
+    const seenTabIds = new Set<string>();
+    const tabs = parsed.tabs.filter((tab): tab is SessionTab => {
+      if (!tab || typeof tab !== 'object') return false;
+      const id = (tab as Partial<SessionTab>).id;
+      if (typeof id !== 'string' || !id || seenTabIds.has(id)) return false;
+      seenTabIds.add(id);
+      return true;
+    });
+    type LegacyGroup = Partial<EditorGroup> & { parentId?: string; orientation?: SplitOrientation };
+    const rawGroups = parsed.groups.filter((group): group is LegacyGroup => Boolean(group && typeof group === 'object'));
+    const keptRawGroups = rawGroups.slice(0, MAX_EDITOR_GROUPS);
+    if (keptRawGroups.length === 0) keptRawGroups.push({ id: 'group-1', tabIds: [] });
+
+    const usedGroupIds = new Set<string>();
+    const groups: EditorGroup[] = keptRawGroups.map((group, index) => {
+      let id = typeof group.id === 'string' && group.id && !usedGroupIds.has(group.id) ? group.id : `group-${index + 1}`;
+      while (usedGroupIds.has(id)) id = `${id}-${index + 1}`;
+      usedGroupIds.add(id);
+      return { id, splitRatio: Number(group.splitRatio), tabIds: [], activeTabId: undefined };
+    });
+
+    const tabById = new Map(tabs.map((tab) => [tab.id, tab]));
+    const assignedTabIds = new Set<string>();
+    const appendTabIds = (target: EditorGroup, tabIds: unknown) => {
+      if (!Array.isArray(tabIds)) return;
+      for (const tabId of tabIds) {
+        if (typeof tabId !== 'string' || !tabById.has(tabId) || assignedTabIds.has(tabId)) continue;
+        target.tabIds.push(tabId);
+        assignedTabIds.add(tabId);
+      }
+    };
+    keptRawGroups.forEach((group, index) => appendTabIds(groups[index], group.tabIds));
+    if (rawGroups.length > MAX_EDITOR_GROUPS) {
+      const lastGroup = groups[MAX_EDITOR_GROUPS - 1];
+      for (const overflowGroup of rawGroups.slice(MAX_EDITOR_GROUPS)) appendTabIds(lastGroup, overflowGroup.tabIds);
+    }
+
+    const groupByRawId = new Map<string, EditorGroup>();
+    keptRawGroups.forEach((group, index) => {
+      if (typeof group.id === 'string') groupByRawId.set(group.id, groups[index]);
+    });
+    const overflowTarget = rawGroups.length > MAX_EDITOR_GROUPS ? groups[MAX_EDITOR_GROUPS - 1] : undefined;
+    for (const tab of tabs) {
+      if (assignedTabIds.has(tab.id)) continue;
+      const target = overflowTarget ?? groupByRawId.get(tab.groupId) ?? groups[0];
+      target.tabIds.push(tab.id);
+      assignedTabIds.add(tab.id);
+    }
+
+    const finalGroupByTabId = new Map<string, EditorGroup>();
+    for (const group of groups) for (const tabId of group.tabIds) finalGroupByTabId.set(tabId, group);
+    const repairedTabs = tabs.map((tab) => ({ ...tab, groupId: finalGroupByTabId.get(tab.id)?.id ?? groups[0].id }));
+
+    const originalActiveGroupId = typeof parsed.activeGroupId === 'string' ? parsed.activeGroupId : '';
+    const originalActiveGroup = rawGroups.find((group) => group.id === originalActiveGroupId);
+    const originalActiveTabId = typeof originalActiveGroup?.activeTabId === 'string' ? originalActiveGroup.activeTabId : undefined;
+    groups.forEach((group, index) => {
+      const rawActiveTabId = typeof keptRawGroups[index]?.activeTabId === 'string' ? keptRawGroups[index].activeTabId : undefined;
+      group.activeTabId = rawActiveTabId && group.tabIds.includes(rawActiveTabId) ? rawActiveTabId : group.tabIds.at(-1);
+    });
+
+    const hasNewRatios = keptRawGroups.every((group) => Number.isFinite(group.splitRatio) && Number(group.splitRatio) > 0);
+    const legacyRatio = keptRawGroups.length === 2
+      && !(Number.isFinite(keptRawGroups[0].splitRatio) && Number(keptRawGroups[0].splitRatio) > 0)
+      && Number.isFinite(keptRawGroups[1].splitRatio)
+      ? Number(keptRawGroups[1].splitRatio)
+      : undefined;
+    const ratioGroups = groups.map((group, index) => ({
+      ...group,
+      splitRatio: hasNewRatios
+        ? Number(keptRawGroups[index].splitRatio)
+        : legacyRatio !== undefined
+          ? (index === 0 ? 1 - legacyRatio : legacyRatio)
+          : 1
+    }));
+    const normalizedGroups = normalizeGroupRatios(ratioGroups);
+
+    const splitOrientation: SplitOrientation = parsed.splitOrientation === 'horizontal' || parsed.splitOrientation === 'vertical'
+      ? parsed.splitOrientation
+      : rawGroups.find((group) => group.orientation === 'horizontal' || group.orientation === 'vertical')?.orientation ?? 'vertical';
+    let activeGroup = normalizedGroups.find((group) => group.id === originalActiveGroupId);
+    if (!activeGroup && originalActiveTabId) activeGroup = normalizedGroups.find((group) => group.tabIds.includes(originalActiveTabId));
+    activeGroup ??= normalizedGroups.find((group) => group.tabIds.length > 0) ?? normalizedGroups[0];
+    if (originalActiveTabId && activeGroup.tabIds.includes(originalActiveTabId)) activeGroup.activeTabId = originalActiveTabId;
+    if (!activeGroup.activeTabId || !activeGroup.tabIds.includes(activeGroup.activeTabId)) activeGroup.activeTabId = activeGroup.tabIds.at(-1);
+
+    return {
+      version: SESSION_VERSION,
+      tabs: repairedTabs,
+      groups: normalizedGroups,
+      activeGroupId: activeGroup.id,
+      splitOrientation,
+      undoSlots: [],
+      settings: normalizeSettings((parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : {}) as Partial<SessionSettings>)
+    };
   } catch {
     return undefined;
   }

@@ -131,7 +131,8 @@ const legacy = deserializeSession(JSON.stringify({
     { id: 'group-1', tabIds: ['legacy-a'], activeTabId: 'legacy-a' },
     { id: 'group-2', parentId: 'group-1', orientation: 'horizontal', splitRatio: 0.3, tabIds: ['legacy-b'], activeTabId: 'legacy-b' }
   ],
-  activeGroupId: 'group-2'
+  activeGroupId: 'group-2',
+  splitOrientation: undefined
 }));
 assert(legacy?.splitOrientation === 'horizontal', 'migrates legacy split orientation');
 assert(Math.abs((legacy?.groups[0]?.splitRatio ?? 0) - 0.7) < 1e-9 && Math.abs((legacy?.groups[1]?.splitRatio ?? 0) - 0.3) < 1e-9, 'migrates legacy child ratio to flat weights');
@@ -154,7 +155,7 @@ const overflowTabs = Array.from({ length: 7 }, (_, index) => createTab({ id: `ov
 const repairedOverflow = deserializeSession(JSON.stringify({
   ...createSessionState(start),
   tabs: overflowTabs,
-  groups: Array.from({ length: 6 }, (_, index) => ({ id: `group-${index + 1}`, splitRatio: index === 1 ? Number.NaN : 1, tabIds: [`overflow-${index + 1}`], activeTabId: `missing-${index + 1}` })),
+  groups: Array.from({ length: 6 }, (_, index) => ({ id: `group-${index + 1}`, splitRatio: index === 1 ? Number.NaN : 1, tabIds: [`overflow-${index + 1}`], activeTabId: index === 5 ? 'overflow-6' : `missing-${index + 1}` })),
   activeGroupId: 'group-6',
   splitOrientation: 'invalid'
 }));
@@ -162,7 +163,7 @@ assert(repairedOverflow?.groups.length === MAX_EDITOR_GROUPS, 'truncates snapsho
 assert(repairedOverflow?.groups[3]?.tabIds.join(',') === 'overflow-4,overflow-5,overflow-6,overflow-7', 'merges truncated and unregistered tabs into fourth group deterministically');
 assert(repairedOverflow?.tabs.slice(3).every((candidate) => candidate.groupId === repairedOverflow.groups[3]?.id), 'rewrites merged tab group references');
 assert(repairedOverflow?.splitOrientation === 'vertical', 'repairs invalid shared orientation');
-assert(repairedOverflow?.activeGroupId === 'group-4' && repairedOverflow.groups[3]?.activeTabId === 'overflow-7', 'repairs invalid active group and tab deterministically');
+assert(repairedOverflow?.activeGroupId === 'group-4' && repairedOverflow.groups[3]?.activeTabId === 'overflow-6', 'repairs invalid active group and tab deterministically');
 if (repairedOverflow) assertRatios(repairedOverflow, 'overflow repair');
 
 const restoredGroups = deserializeSession(serializeSession(fourGroups));
