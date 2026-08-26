@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Edgedor",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "identifier": "com.mrered.edgedor",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -49,5 +49,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVBNTE5REJCQjU4MjQ3QQpSV1I2SkZpNzJ4bWxEc1NyQ1FSaWIrT2FoeitxUGVGQmJKSFR0NmRHWk11YzhPeVAyRi9HUS9UTQo=",
+      "endpoints": [
+        "https://github.com/Mrered/Edgedor/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
