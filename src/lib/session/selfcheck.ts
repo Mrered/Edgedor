@@ -16,10 +16,37 @@ import {
   serializeSession,
   touchTab
 } from './model.ts';
+import {
+  SESSION_KEY,
+  SETTINGS_KEY,
+  clearSessionCheckpoint,
+  persistSessionSettings,
+  writeSessionCheckpoint,
+  type SessionStorage
+} from './storage.ts';
 
 const assert = (condition: unknown, message: string) => {
   if (!condition) throw new Error(`session self-check failed: ${message}`);
 };
+
+class MemoryStorage implements SessionStorage {
+  readonly values = new Map<string, string>();
+  readonly operations: Array<{ type: 'set' | 'remove'; key: string; value?: string }> = [];
+
+  getItem(key: string): string | null {
+    return this.values.get(key) ?? null;
+  }
+
+  setItem(key: string, value: string): void {
+    this.values.set(key, value);
+    this.operations.push({ type: 'set', key, value });
+  }
+
+  removeItem(key: string): void {
+    this.values.delete(key);
+    this.operations.push({ type: 'remove', key });
+  }
+}
 
 const start = 1_700_000_000_000;
 let state = createSessionState(start);
@@ -67,4 +94,31 @@ const batchResult = expireTabs(batchExpiry, start + TAB_EXPIRY_MS + 12);
 assert(batchResult.state.undoSlots.length === MAX_UNDO_SLOTS && batchResult.state.undoSlots[0]?.tab.id === 'stale-11', 'keeps newest expired tabs in undo slots');
 const touched = touchTab(addTab(createSessionState(start), createTab({ id: 'touch-me', now: start })), 'touch-me', start + 4_000);
 assert(touched.tabs[0]?.lastFocusedAt === start + 4_000, 'touch refreshes tab lifetime without changing group focus');
+
+const storage = new MemoryStorage();
+const preservingState = addTab(createSessionState(start), previewTab);
+persistSessionSettings(storage, preservingState.settings);
+assert(storage.operations.length === 1 && storage.operations[0]?.key === SETTINGS_KEY, 'ordinary settings persistence never writes session');
+assert(!storage.operations.some((operation) => operation.type === 'set' && operation.key === SESSION_KEY), 'enabling recovery does not write session');
+writeSessionCheckpoint(storage, preservingState);
+const sessionWrite = storage.operations.find((operation) => operation.type === 'set' && operation.key === SESSION_KEY);
+assert(Boolean(sessionWrite?.value), 'enabled recovery checkpoint writes session');
+const checkpoint = JSON.parse(sessionWrite?.value ?? '{}') as { version?: number; tabs?: Array<{ content?: string; previewDataUrl?: string }> };
+assert(checkpoint.version === preservingState.version, 'checkpoint includes session version');
+assert(checkpoint.tabs?.[0]?.content === '' && checkpoint.tabs[0]?.previewDataUrl === undefined, 'checkpoint strips preview payload');
+
+const disabledState = { ...preservingState, settings: { ...preservingState.settings, preserveOnRestart: false } };
+persistSessionSettings(storage, disabledState.settings);
+const disableOperations = storage.operations.slice(-2);
+assert(disableOperations[0]?.type === 'set' && disableOperations[0].key === SETTINGS_KEY, 'disabling recovery persists settings');
+assert(disableOperations[1]?.type === 'remove' && disableOperations[1].key === SESSION_KEY, 'disabling recovery immediately removes session');
+const beforeDisabledCheckpoint = storage.operations.length;
+writeSessionCheckpoint(storage, disabledState);
+const disabledCheckpointOperations = storage.operations.slice(beforeDisabledCheckpoint);
+assert(disabledCheckpointOperations.length === 1 && disabledCheckpointOperations[0]?.type === 'remove', 'disabled checkpoint only removes session');
+assert(!disabledCheckpointOperations.some((operation) => operation.type === 'set' && operation.key === SESSION_KEY), 'disabled checkpoint never writes session');
+
+storage.setItem(SESSION_KEY, 'stale');
+clearSessionCheckpoint(storage);
+assert(storage.operations.at(-1)?.type === 'remove' && storage.operations.at(-1)?.key === SESSION_KEY, 'explicit clear removes snapshot');
 console.log('Edgedor session self-check passed');
