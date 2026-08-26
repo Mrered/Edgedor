@@ -38,6 +38,7 @@ export function validateShortcut(binding: string): string | undefined {
   const value = binding.trim().replace(/\s+/g, '');
   if (!value || value.split('+').some((part) => !part)) return undefined;
   const parts = value.split('+').map((part) => part.toLowerCase());
+  if (parts.length < 2) return undefined;
   const modifiers = new Set(['cmd', 'command', 'meta', 'cmdorctrl', 'ctrl', 'control', 'alt', 'option', 'shift']);
   const key = parts.at(-1) ?? '';
   if (parts.slice(0, -1).some((part) => !modifiers.has(part))) return undefined;

@@ -173,7 +173,8 @@ assert(repairedOverflow?.splitOrientation === 'vertical', 'repairs invalid share
 assert(repairedOverflow?.activeGroupId === 'group-4' && repairedOverflow.groups[3]?.activeTabId === 'overflow-6', 'repairs invalid active group and tab deterministically');
 if (repairedOverflow) assertRatios(repairedOverflow, 'overflow repair');
 
-const restoredGroups = deserializeSession(serializeSession(fourGroups));
+const persistedFourGroups = addTab(fourGroups, createTab({ id: 'four-group-session', groupId: fourGroups.activeGroupId, now: start }), fourGroups.activeGroupId);
+const restoredGroups = deserializeSession(serializeSession(persistedFourGroups));
 assert(restoredGroups?.groups.map((group) => group.id).join(',') === fourGroups.groups.map((group) => group.id).join(','), 'round-trips flat group order');
 assert(restoredGroups?.activeGroupId === fourGroups.activeGroupId && restoredGroups?.splitOrientation === fourGroups.splitOrientation, 'round-trips active group and shared orientation');
 if (restoredGroups) assertRatios(restoredGroups, 'serialized group restoration');

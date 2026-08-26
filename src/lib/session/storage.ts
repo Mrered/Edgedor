@@ -1,4 +1,12 @@
-import { serializeSession, serializeSettings, type SessionSettings, type SessionState } from './model.ts';
+import {
+  DEFAULT_SESSION_SETTINGS,
+  deserializeSession,
+  deserializeSettings,
+  serializeSession,
+  serializeSettings,
+  type SessionSettings,
+  type SessionState
+} from './model.ts';
 
 export const SESSION_KEY = 'edgedor.session';
 export const SETTINGS_KEY = 'edgedor.settings';
@@ -7,6 +15,34 @@ export interface SessionStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
   removeItem(key: string): void;
+}
+
+export interface StartupState {
+  settings: SessionSettings;
+  session?: SessionState;
+}
+
+function defaultSettings(): SessionSettings {
+  return { ...DEFAULT_SESSION_SETTINGS, shortcutOverrides: {} };
+}
+
+export function readStartupState(storage: SessionStorage): StartupState {
+  const storedSettings = deserializeSettings(storage.getItem(SETTINGS_KEY) ?? '');
+  if (storedSettings && !storedSettings.preserveOnRestart) {
+    clearSessionCheckpoint(storage);
+    return { settings: storedSettings };
+  }
+
+  const serializedSession = storage.getItem(SESSION_KEY);
+  const restoredSession = serializedSession === null ? undefined : deserializeSession(serializedSession);
+  if (serializedSession !== null && !restoredSession) clearSessionCheckpoint(storage);
+
+  const settings = storedSettings
+    ?? (restoredSession ? { ...restoredSession.settings, preserveOnRestart: true } : defaultSettings());
+  return {
+    settings,
+    session: restoredSession ? { ...restoredSession, settings } : undefined
+  };
 }
 
 export function persistSessionSettings(storage: SessionStorage, settings: SessionSettings): void {

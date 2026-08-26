@@ -11,7 +11,7 @@
   import ToolbarMount from '../components/ToolbarMount.svelte';
   import { listenPanelStatus, panelAction, type PanelStatus } from '../lib/tauri/panel';
   import { createTranslator } from '../lib/i18n';
-  import { DEFAULT_SESSION_SETTINGS, MAX_EDITOR_GROUPS, MIN_GROUP_RATIO, SESSION_KEY, SETTINGS_KEY, addTab, clearSessionCheckpoint, closeTab, createGroup, createSessionState, createTab, deserializeSettings, expireTabs, focusTab, moveTabToGroup, persistSessionSettings, readSessionCheckpoint, removeGroup, resizeAdjacentGroups, restoreLatest, touchTab, updateTab, writeSessionCheckpoint, type EditorGroup, type EditorSnapshot, type SessionSettings, type SessionState, type SessionTab } from '../lib/session';
+  import { DEFAULT_SESSION_SETTINGS, MAX_EDITOR_GROUPS, MIN_GROUP_RATIO, addTab, clearSessionCheckpoint, closeTab, createGroup, createSessionState, createTab, expireTabs, focusTab, moveTabToGroup, persistSessionSettings, readStartupState, removeGroup, resizeAdjacentGroups, restoreLatest, touchTab, updateTab, writeSessionCheckpoint, type EditorGroup, type EditorSnapshot, type SessionSettings, type SessionState, type SessionTab } from '../lib/session';
   import { shortcutOverridesFingerprint, validateShortcut, type EditorCommand } from '../lib/shortcuts';
   let status: PanelStatus = { visible: true, focused: true, bridgeReady: false };
   let pinned = false;
@@ -478,12 +478,12 @@
     }
   }
   onMount(() => {
-    const storedSettings = deserializeSettings(localStorage.getItem(SETTINGS_KEY) ?? '');
-    const saved = readSessionCheckpoint(localStorage.getItem(SESSION_KEY) ?? '');
-    const settings = { ...(storedSettings ?? saved?.settings ?? session.settings), pinned: false };
-    const restoredBase = saved && settings.preserveOnRestart ? { ...saved, settings } : { ...session, settings };
+    const startup = readStartupState(localStorage);
+    const saved = startup.session;
+    const settings = { ...startup.settings, pinned: false };
+    const restoredBase = saved ? { ...saved, settings } : { ...session, settings };
     const expiredOnStartup = expireTabs(restoredBase);
-    const restored = saved && settings.preserveOnRestart
+    const restored = saved
       ? expiredOnStartup.state
       : addTab(expiredOnStartup.state, createTab());
     const restoredActiveTabId = restored.groups.find((group) => group.id === restored.activeGroupId)?.activeTabId;

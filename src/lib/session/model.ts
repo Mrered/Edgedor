@@ -1,3 +1,5 @@
+import { isShortcutCommand, validateShortcut } from '../shortcuts.ts';
+
 export const SESSION_VERSION = 1;
 export const TAB_EXPIRY_MS = 24 * 60 * 60 * 1000;
 export const MAX_UNDO_SLOTS = 10;
@@ -398,66 +400,162 @@ export function serializeSettings(settings: SessionSettings): string {
 
 export function deserializeSettings(serialized: string): SessionSettings | undefined {
   try {
-    const parsed = JSON.parse(serialized) as Partial<SessionSettings>;
-    if (!parsed || typeof parsed !== 'object') return undefined;
+    const parsed: unknown = JSON.parse(serialized);
+    if (!isRecord(parsed)) return undefined;
     return normalizeSettings(parsed);
   } catch {
     return undefined;
   }
 }
 
-function normalizeSettings(input: Partial<SessionSettings>): SessionSettings {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function booleanSetting(input: Record<string, unknown>, key: keyof SessionSettings): boolean {
+  const value = input[key];
+  return typeof value === 'boolean' ? value : DEFAULT_SESSION_SETTINGS[key] as boolean;
+}
+
+function enumSetting<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === 'string' && allowed.includes(value as T) ? value as T : fallback;
+}
+
+function finiteSetting(value: unknown, fallback: number, minimum: number, maximum: number): number {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.max(minimum, Math.min(maximum, value))
+    : fallback;
+}
+
+function normalizeShortcutOverrides(value: unknown): Record<string, string> {
+  const overrides: Record<string, string> = {};
+  if (!isRecord(value)) return overrides;
+  for (const [command, binding] of Object.entries(value)) {
+    if (!isShortcutCommand(command) || typeof binding !== 'string') continue;
+    const normalized = validateShortcut(binding);
+    if (normalized) overrides[command] = normalized;
+  }
+  return overrides;
+}
+
+function normalizeSettings(input: Record<string, unknown>): SessionSettings {
   return {
-    preserveOnRestart: input.preserveOnRestart ?? DEFAULT_SESSION_SETTINGS.preserveOnRestart,
-    launchAtLogin: input.launchAtLogin ?? DEFAULT_SESSION_SETTINGS.launchAtLogin,
-    shortcutProfile: input.shortcutProfile ?? DEFAULT_SESSION_SETTINGS.shortcutProfile,
-    shortcutOverrides: input.shortcutOverrides ?? {},
-    fontSize: input.fontSize ?? DEFAULT_SESSION_SETTINGS.fontSize,
-    showLineNumbers: input.showLineNumbers ?? DEFAULT_SESSION_SETTINGS.showLineNumbers,
-    showMinimap: input.showMinimap ?? DEFAULT_SESSION_SETTINGS.showMinimap,
-    showFolding: input.showFolding ?? DEFAULT_SESSION_SETTINGS.showFolding,
-    showGlyphMargin: input.showGlyphMargin ?? DEFAULT_SESSION_SETTINGS.showGlyphMargin,
-    showTabs: input.showTabs ?? DEFAULT_SESSION_SETTINGS.showTabs,
-    showMenuBarIcon: input.showMenuBarIcon ?? DEFAULT_SESSION_SETTINGS.showMenuBarIcon,
-    showDockIcon: input.showDockIcon ?? DEFAULT_SESSION_SETTINGS.showDockIcon,
-    edgeModifier: input.edgeModifier ?? DEFAULT_SESSION_SETTINGS.edgeModifier,
-    leftEdgeEnabled: input.leftEdgeEnabled ?? DEFAULT_SESSION_SETTINGS.leftEdgeEnabled,
-    rightEdgeEnabled: input.rightEdgeEnabled ?? DEFAULT_SESSION_SETTINGS.rightEdgeEnabled,
-    edgeDwellMs: Math.max(50, Math.min(2000, input.edgeDwellMs ?? DEFAULT_SESSION_SETTINGS.edgeDwellMs)),
-    panelAnimationEnabled: input.panelAnimationEnabled ?? DEFAULT_SESSION_SETTINGS.panelAnimationEnabled,
-    panelAnimationDurationMs: Math.max(50, Math.min(1000, input.panelAnimationDurationMs ?? DEFAULT_SESSION_SETTINGS.panelAnimationDurationMs)),
-    tabLayout: input.tabLayout ?? DEFAULT_SESSION_SETTINGS.tabLayout,
-    topTabBehavior: input.topTabBehavior ?? DEFAULT_SESSION_SETTINGS.topTabBehavior,
-    showBreadcrumbs: input.showBreadcrumbs ?? DEFAULT_SESSION_SETTINGS.showBreadcrumbs,
-    showStatusBar: input.showStatusBar ?? DEFAULT_SESSION_SETTINGS.showStatusBar,
-    pinned: input.pinned ?? DEFAULT_SESSION_SETTINGS.pinned
+    preserveOnRestart: booleanSetting(input, 'preserveOnRestart'),
+    launchAtLogin: booleanSetting(input, 'launchAtLogin'),
+    shortcutProfile: enumSetting(input.shortcutProfile, ['vscode', 'sublime', 'jetbrains', 'vim'], DEFAULT_SESSION_SETTINGS.shortcutProfile),
+    shortcutOverrides: normalizeShortcutOverrides(input.shortcutOverrides),
+    fontSize: finiteSetting(input.fontSize, DEFAULT_SESSION_SETTINGS.fontSize, 10, 32),
+    showLineNumbers: booleanSetting(input, 'showLineNumbers'),
+    showMinimap: booleanSetting(input, 'showMinimap'),
+    showFolding: booleanSetting(input, 'showFolding'),
+    showGlyphMargin: booleanSetting(input, 'showGlyphMargin'),
+    showTabs: booleanSetting(input, 'showTabs'),
+    showMenuBarIcon: booleanSetting(input, 'showMenuBarIcon'),
+    showDockIcon: booleanSetting(input, 'showDockIcon'),
+    edgeModifier: enumSetting(input.edgeModifier, ['command', 'option', 'control', 'shift'], DEFAULT_SESSION_SETTINGS.edgeModifier),
+    leftEdgeEnabled: booleanSetting(input, 'leftEdgeEnabled'),
+    rightEdgeEnabled: booleanSetting(input, 'rightEdgeEnabled'),
+    edgeDwellMs: finiteSetting(input.edgeDwellMs, DEFAULT_SESSION_SETTINGS.edgeDwellMs, 50, 2_000),
+    panelAnimationEnabled: booleanSetting(input, 'panelAnimationEnabled'),
+    panelAnimationDurationMs: finiteSetting(input.panelAnimationDurationMs, DEFAULT_SESSION_SETTINGS.panelAnimationDurationMs, 50, 1_000),
+    tabLayout: enumSetting(input.tabLayout, ['top', 'left', 'right'], DEFAULT_SESSION_SETTINGS.tabLayout),
+    topTabBehavior: enumSetting(input.topTabBehavior, ['scroll', 'compress'], DEFAULT_SESSION_SETTINGS.topTabBehavior),
+    showBreadcrumbs: booleanSetting(input, 'showBreadcrumbs'),
+    showStatusBar: booleanSetting(input, 'showStatusBar'),
+    pinned: booleanSetting(input, 'pinned')
+  };
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function optionalBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
+}
+
+function copyPlainRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value)) return undefined;
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+    result[key] = item;
+  }
+  return result;
+}
+
+function normalizeEditorSnapshot(value: unknown): EditorSnapshot {
+  if (!isRecord(value)) return {};
+  const editor: EditorSnapshot = {};
+  if (typeof value.scrollTop === 'number' && Number.isFinite(value.scrollTop)) editor.scrollTop = value.scrollTop;
+  if (typeof value.scrollLeft === 'number' && Number.isFinite(value.scrollLeft)) editor.scrollLeft = value.scrollLeft;
+  const selections = copyPlainRecord(value.selections);
+  const viewState = copyPlainRecord(value.viewState);
+  if (selections) editor.selections = selections;
+  if (viewState) editor.viewState = viewState;
+  return editor;
+}
+
+function normalizeTab(value: unknown): SessionTab | undefined {
+  if (!isRecord(value)) return undefined;
+  const kind = enumSetting<TabKind>(value.kind, ['temporary', 'file', 'preview'], 'temporary');
+  if (value.kind !== kind) return undefined;
+  if (typeof value.id !== 'string' || value.id.length === 0) return undefined;
+  if (typeof value.title !== 'string' || typeof value.content !== 'string' || typeof value.language !== 'string' || typeof value.groupId !== 'string') return undefined;
+  if (typeof value.readOnly !== 'boolean' || typeof value.manuallyNamed !== 'boolean') return undefined;
+  if (typeof value.createdAt !== 'number' || !Number.isFinite(value.createdAt)
+    || typeof value.updatedAt !== 'number' || !Number.isFinite(value.updatedAt)
+    || typeof value.lastFocusedAt !== 'number' || !Number.isFinite(value.lastFocusedAt)) return undefined;
+  const filePath = optionalString(value.filePath);
+  if ((kind === 'file' || kind === 'preview') && !filePath) return undefined;
+  const lineEnding = value.lineEnding === '\n' || value.lineEnding === '\r\n' || value.lineEnding === '\r' ? value.lineEnding : undefined;
+  return {
+    id: value.id,
+    kind,
+    title: value.title,
+    content: kind === 'preview' ? '' : value.content,
+    language: value.language,
+    languageManuallySelected: optionalBoolean(value.languageManuallySelected),
+    groupId: value.groupId,
+    filePath,
+    encoding: optionalString(value.encoding),
+    lineEnding,
+    readOnly: value.readOnly,
+    dirty: optionalBoolean(value.dirty),
+    previewMime: optionalString(value.previewMime),
+    manuallyNamed: value.manuallyNamed,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    lastFocusedAt: value.lastFocusedAt,
+    editor: normalizeEditorSnapshot(value.editor)
   };
 }
 
 export function deserializeSession(serialized: string): SessionState | undefined {
   try {
-    const parsed = JSON.parse(serialized) as Record<string, unknown>;
-    if (parsed?.version !== SESSION_VERSION || !Array.isArray(parsed.tabs) || !Array.isArray(parsed.groups)) return undefined;
+    const parsed: unknown = JSON.parse(serialized);
+    if (!isRecord(parsed) || parsed.version !== SESSION_VERSION || !Array.isArray(parsed.tabs) || !Array.isArray(parsed.groups)) return undefined;
 
     const seenTabIds = new Set<string>();
-    const tabs = parsed.tabs.filter((tab): tab is SessionTab => {
-      if (!tab || typeof tab !== 'object') return false;
-      const id = (tab as Partial<SessionTab>).id;
-      if (typeof id !== 'string' || !id || seenTabIds.has(id)) return false;
-      seenTabIds.add(id);
-      return true;
-    });
-    type LegacyGroup = Partial<EditorGroup> & { parentId?: string; orientation?: SplitOrientation };
-    const rawGroups = parsed.groups.filter((group): group is LegacyGroup => Boolean(group && typeof group === 'object'));
+    const tabs: SessionTab[] = [];
+    for (const value of parsed.tabs) {
+      const tab = normalizeTab(value);
+      if (!tab || seenTabIds.has(tab.id)) continue;
+      seenTabIds.add(tab.id);
+      tabs.push(tab);
+    }
+    if (tabs.length === 0) return undefined;
+    type LegacyGroup = Record<string, unknown>;
+    const rawGroups = parsed.groups.filter(isRecord);
     const keptRawGroups = rawGroups.slice(0, MAX_EDITOR_GROUPS);
     if (keptRawGroups.length === 0) keptRawGroups.push({ id: 'group-1', tabIds: [] });
 
     const usedGroupIds = new Set<string>();
     const groups: EditorGroup[] = keptRawGroups.map((group, index) => {
-      let id = typeof group.id === 'string' && group.id && !usedGroupIds.has(group.id) ? group.id : `group-${index + 1}`;
+      let id = typeof group.id === 'string' && group.id.length > 0 && !usedGroupIds.has(group.id) ? group.id : `group-${index + 1}`;
       while (usedGroupIds.has(id)) id = `${id}-${index + 1}`;
       usedGroupIds.add(id);
-      return { id, splitRatio: Number(group.splitRatio), tabIds: [], activeTabId: undefined };
+      return { id, splitRatio: typeof group.splitRatio === 'number' && Number.isFinite(group.splitRatio) ? group.splitRatio : Number.NaN, tabIds: [], activeTabId: undefined };
     });
 
     const tabById = new Map(tabs.map((tab) => [tab.id, tab]));
@@ -500,16 +598,16 @@ export function deserializeSession(serialized: string): SessionState | undefined
       group.activeTabId = rawActiveTabId && group.tabIds.includes(rawActiveTabId) ? rawActiveTabId : group.tabIds.at(-1);
     });
 
-    const hasNewRatios = keptRawGroups.every((group) => Number.isFinite(group.splitRatio) && Number(group.splitRatio) > 0);
+    const hasNewRatios = keptRawGroups.every((group) => typeof group.splitRatio === 'number' && Number.isFinite(group.splitRatio) && group.splitRatio > 0);
     const legacyRatio = keptRawGroups.length === 2
-      && !(Number.isFinite(keptRawGroups[0].splitRatio) && Number(keptRawGroups[0].splitRatio) > 0)
-      && Number.isFinite(keptRawGroups[1].splitRatio)
-      ? Number(keptRawGroups[1].splitRatio)
+      && !(typeof keptRawGroups[0].splitRatio === 'number' && Number.isFinite(keptRawGroups[0].splitRatio) && keptRawGroups[0].splitRatio > 0)
+      && typeof keptRawGroups[1].splitRatio === 'number' && Number.isFinite(keptRawGroups[1].splitRatio)
+      ? keptRawGroups[1].splitRatio
       : undefined;
     const ratioGroups = groups.map((group, index) => ({
       ...group,
       splitRatio: hasNewRatios
-        ? Number(keptRawGroups[index].splitRatio)
+        ? keptRawGroups[index].splitRatio as number
         : legacyRatio !== undefined
           ? (index === 0 ? 1 - legacyRatio : legacyRatio)
           : 1
@@ -518,7 +616,7 @@ export function deserializeSession(serialized: string): SessionState | undefined
 
     const splitOrientation: SplitOrientation = parsed.splitOrientation === 'horizontal' || parsed.splitOrientation === 'vertical'
       ? parsed.splitOrientation
-      : rawGroups.find((group) => group.orientation === 'horizontal' || group.orientation === 'vertical')?.orientation ?? 'vertical';
+      : enumSetting(rawGroups.find((group) => group.orientation === 'horizontal' || group.orientation === 'vertical')?.orientation, ['horizontal', 'vertical'], 'vertical');
     let activeGroup = normalizedGroups.find((group) => group.id === originalActiveGroupId);
     if (!activeGroup && originalActiveTabId) activeGroup = normalizedGroups.find((group) => group.tabIds.includes(originalActiveTabId));
     activeGroup ??= normalizedGroups.find((group) => group.tabIds.length > 0) ?? normalizedGroups[0];
@@ -532,7 +630,7 @@ export function deserializeSession(serialized: string): SessionState | undefined
       activeGroupId: activeGroup.id,
       splitOrientation,
       undoSlots: [],
-      settings: normalizeSettings((parsed.settings && typeof parsed.settings === 'object' ? parsed.settings : {}) as Partial<SessionSettings>)
+      settings: normalizeSettings(isRecord(parsed.settings) ? parsed.settings : {})
     };
   } catch {
     return undefined;
