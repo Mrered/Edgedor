@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: planning
 stopped_at: Phase 3 core interaction slice compiled; runtime permission and file preview remain
-last_updated: "2026-08-27T03:17:00.000+08:00"
-last_activity: 2026-08-27 — 完成原生面板状态与退出可靠性加固
+last_updated: "2026-08-27T03:54:00.000+08:00"
+last_activity: 2026-08-27 — 完成文件拖放、会话恢复与保存绑定安全修复
 progress:
   total_phases: 6
   completed_phases: 0
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-08-26)
 Phase: 3 of 6 (编辑器交互与会话)
 Plan: 1 of 1 in current phase
 Status: In progress
-Last activity: 2026-08-27 — 完成 quick task 260827-3vs：原生面板状态与退出可靠性加固
+Last activity: 2026-08-27 — 完成 quick task 260827-4ki：文件拖放与保存绑定安全修复
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -78,6 +78,7 @@ None yet.
 | 260827-1ij | 严格限制会话内容快照到切换标签、隐藏面板和正常退出 | 2026-08-27 | b8ae1a6 | Needs Review | [260827-1ij-session-checkpoints](./quick/260827-1ij-session-checkpoints/) |
 | 260827-31h | 扩展为最多四个可拖比例并可恢复的编辑组 | 2026-08-27 | 984793e | Needs Review | [260827-31h-editor-groups](./quick/260827-31h-editor-groups/) |
 | 260827-3vs | 修复原生面板状态与退出可靠性缺陷 | 2026-08-27 | 110061a | Needs Review | [260827-3vs-native-hardening](./quick/260827-3vs-native-hardening/) |
+| 260827-4ki | 修复文件拖放、会话恢复与保存绑定安全缺陷 | 2026-08-27 | 6adcb3f | Needs Review | [260827-4ki-data-safety](./quick/260827-4ki-data-safety/) |
 
 ## Deferred Items
 
