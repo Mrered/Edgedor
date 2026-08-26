@@ -1,18 +1,9 @@
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExitDecision {
     Allow,
-    AllowFallback(ExitFallbackReason),
     PreventAndRequestCheckpoint,
     Prevent,
 }
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ExitFallbackReason {
-    ListenerUnavailable,
-    CheckpointUnconfirmed,
-}
-
-pub const MAX_BLOCKED_EXIT_ATTEMPTS: u8 = 3;
 
 #[derive(Debug, Default)]
 pub struct ShutdownState {
@@ -20,8 +11,6 @@ pub struct ShutdownState {
     listener_ready: bool,
     request_delivered: bool,
     exit_confirmed: bool,
-    blocked_exit_attempts: u8,
-    delivery_attempts: u8,
 }
 
 impl ShutdownState {
@@ -31,19 +20,8 @@ impl ShutdownState {
         }
 
         self.normal_exit_pending = true;
-        self.blocked_exit_attempts = self.blocked_exit_attempts.saturating_add(1);
-        if self.blocked_exit_attempts >= MAX_BLOCKED_EXIT_ATTEMPTS {
-            let reason = if self.listener_ready {
-                ExitFallbackReason::CheckpointUnconfirmed
-            } else {
-                ExitFallbackReason::ListenerUnavailable
-            };
-            return ExitDecision::AllowFallback(reason);
-        }
-
-        if self.listener_ready {
+        if self.listener_ready && !self.request_delivered {
             self.request_delivered = true;
-            self.delivery_attempts = self.delivery_attempts.saturating_add(1);
             return ExitDecision::PreventAndRequestCheckpoint;
         }
         ExitDecision::Prevent
@@ -53,16 +31,19 @@ impl ShutdownState {
         self.listener_ready = true;
         if self.normal_exit_pending
             && !self.request_delivered
-            && self.blocked_exit_attempts < MAX_BLOCKED_EXIT_ATTEMPTS
         {
             self.request_delivered = true;
-            self.delivery_attempts = self.delivery_attempts.saturating_add(1);
             return true;
         }
         false
     }
 
     pub fn delivery_failed(&mut self) {
+        self.request_delivered = false;
+    }
+
+    pub fn cancel_request(&mut self) {
+        self.normal_exit_pending = false;
         self.request_delivered = false;
     }
 
@@ -82,8 +63,8 @@ mod tests {
         for _ in 0..=3 {
             assert_eq!(state.exit_requested(Some(tauri::RESTART_EXIT_CODE)), ExitDecision::Allow);
         }
-        state.mark_listener_ready();
-        assert_eq!(state.exit_requested(None), ExitDecision::PreventAndRequestCheckpoint);
+        assert!(state.mark_listener_ready());
+        assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
     }
 
     #[test]
@@ -127,8 +108,9 @@ mod tests {
     fn unconfirmed_delivery_never_allows_fallback() {
         let mut state = ShutdownState::default();
         state.mark_listener_ready();
+        assert_eq!(state.exit_requested(None), ExitDecision::PreventAndRequestCheckpoint);
         for _ in 0..10 {
-            assert_eq!(state.exit_requested(None), ExitDecision::PreventAndRequestCheckpoint);
+            assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
         }
     }
 

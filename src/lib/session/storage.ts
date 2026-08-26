@@ -22,6 +22,8 @@ export interface StartupState {
   session?: SessionState;
 }
 
+export type CheckpointResult = { ok: true } | { ok: false; error: unknown };
+
 function defaultSettings(): SessionSettings {
   return { ...DEFAULT_SESSION_SETTINGS, shortcutOverrides: {} };
 }
@@ -50,12 +52,17 @@ export function persistSessionSettings(storage: SessionStorage, settings: Sessio
   if (!settings.preserveOnRestart) storage.removeItem(SESSION_KEY);
 }
 
-export function writeSessionCheckpoint(storage: SessionStorage, state: SessionState): void {
-  if (state.settings.preserveOnRestart) {
-    storage.setItem(SESSION_KEY, serializeSession(state));
-    return;
+export function writeSessionCheckpoint(storage: SessionStorage, state: SessionState): CheckpointResult {
+  try {
+    if (state.settings.preserveOnRestart) {
+      storage.setItem(SESSION_KEY, serializeSession(state));
+    } else {
+      storage.removeItem(SESSION_KEY);
+    }
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error };
   }
-  storage.removeItem(SESSION_KEY);
 }
 
 export function clearSessionCheckpoint(storage: SessionStorage): void {

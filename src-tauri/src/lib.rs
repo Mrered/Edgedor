@@ -218,6 +218,12 @@ fn mark_quit_listener_ready(shutdown: State<'_, std::sync::Mutex<shutdown::Shutd
 }
 
 #[tauri::command]
+fn cancel_quit_request(shutdown: State<'_, std::sync::Mutex<shutdown::ShutdownState>>) -> Result<(), String> {
+    shutdown.lock().map_err(|_| "shutdown state unavailable")?.cancel_request();
+    Ok(())
+}
+
+#[tauri::command]
 fn startup_paths() -> Vec<String> { std::env::args().skip(1).filter(|path| !path.starts_with('-')).collect() }
 
 #[tauri::command]
@@ -334,7 +340,7 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, preview_file, set_panel_pinned, quit_app, mark_quit_listener_ready, startup_paths, set_menu_bar_icon_visible, set_dock_icon_visible, set_edge_modifier, set_edge_trigger_options, set_panel_animation])
+        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, preview_file, set_panel_pinned, quit_app, mark_quit_listener_ready, cancel_quit_request, startup_paths, set_menu_bar_icon_visible, set_dock_icon_visible, set_edge_modifier, set_edge_trigger_options, set_panel_animation])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -370,9 +376,6 @@ pub fn run() {
                 .unwrap_or(shutdown::ExitDecision::Prevent);
             match decision {
                 shutdown::ExitDecision::Allow => {}
-                shutdown::ExitDecision::AllowFallback(reason) => {
-                    eprintln!("Edgedor exit checkpoint fallback: {reason:?}");
-                }
                 shutdown::ExitDecision::PreventAndRequestCheckpoint => {
                     api.prevent_exit();
                     if let Err(error) = app.emit("quit_requested", ()) {

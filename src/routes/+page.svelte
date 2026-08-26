@@ -72,7 +72,7 @@
   }
   function checkpoint(next: SessionState = session) {
     applySession(next);
-    writeSessionCheckpoint(localStorage, next);
+    return writeSessionCheckpoint(localStorage, next);
   }
   function activeLocation(state: SessionState): string {
     const group = state.groups.find((candidate) => candidate.id === state.activeGroupId);
@@ -473,11 +473,16 @@
   async function requestQuit() {
     if (quitInProgress) return;
     quitInProgress = true;
-    try {
-      checkpoint(session);
-    } catch (error) {
-      console.error('Edgedor session checkpoint failed during quit', error);
-      showNotice(String(error));
+    const result = checkpoint(session);
+    if (!result.ok) {
+      console.error('Edgedor session checkpoint failed during quit', result.error);
+      showNotice(t('quitCheckpointFailed'));
+      if (!window.confirm(t('quitWithoutSaveConfirm'))) {
+        try { await invoke('cancel_quit_request'); }
+        catch (error) { console.error('Edgedor quit cancellation reset failed', error); }
+        quitInProgress = false;
+        return;
+      }
     }
     try {
       await invoke('quit_app');
