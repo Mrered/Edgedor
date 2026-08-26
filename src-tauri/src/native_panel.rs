@@ -22,6 +22,39 @@ const DEFAULT_PANEL_ANIMATION_MS: u64 = 180;
 const PANEL_WIDTH_RATIO_KEY: &str = "EdgedorPanelWidthRatio";
 static MENU_APP: OnceLock<AppHandle> = OnceLock::new();
 
+#[derive(Clone, Copy, Debug)]
+struct PanelFrame {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+impl PanelFrame {
+    fn from_rect(frame: NSRect) -> Self {
+        Self { x: frame.origin.x, y: frame.origin.y, width: frame.size.width, height: frame.size.height }
+    }
+
+    fn rect(self) -> NSRect {
+        NSRect::new(NSPoint::new(self.x, self.y), NSSize::new(self.width, self.height))
+    }
+
+    fn is_valid(self) -> bool {
+        self.x.is_finite()
+            && self.y.is_finite()
+            && self.width.is_finite()
+            && self.height.is_finite()
+            && self.width > 0.0
+            && self.height > 0.0
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+enum AnimationTarget {
+    Hidden { frame: Option<PanelFrame> },
+    Visible { frame: PanelFrame, edge: Option<edge_trigger::Edge> },
+}
+
 define_class!(
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
@@ -62,6 +95,7 @@ pub struct NativePanel {
     animation_enabled: Arc<Mutex<bool>>,
     animation_duration_ms: Arc<Mutex<u64>>,
     animation_generation: Arc<AtomicU64>,
+    animation_target: Arc<Mutex<AnimationTarget>>,
     pinned: Arc<Mutex<bool>>,
     width_ratio: Arc<Mutex<f64>>,
     last_target: Mutex<Option<(f64, f64, f64, f64)>>,
@@ -83,6 +117,7 @@ impl Default for NativePanel {
             animation_enabled: Arc::new(Mutex::new(true)),
             animation_duration_ms: Arc::new(Mutex::new(DEFAULT_PANEL_ANIMATION_MS)),
             animation_generation: Arc::new(AtomicU64::new(0)),
+            animation_target: Arc::new(Mutex::new(AnimationTarget::Hidden { frame: None })),
             pinned: Arc::new(Mutex::new(false)),
             width_ratio: Arc::new(Mutex::new(saved_width_ratio())),
             last_target: Mutex::new(None),
@@ -224,10 +259,8 @@ impl NativePanel {
         *self.animation_duration_ms.lock().map_err(|_| "animation duration state unavailable")? = duration_ms;
         if !enabled {
             self.animation_generation.fetch_add(1, Ordering::Relaxed);
-            if let (Some(panel), Ok(last_target)) = (self.panel(), self.last_target.lock()) {
-                if let Some((x, y, width, height)) = *last_target {
-                    panel.setFrame_display(NSRect::new(NSPoint::new(x, y), NSSize::new(width, height)), true);
-                }
+            if let Some(panel) = self.panel() {
+                converge_latest_target(panel, &self.animation_target, &self.current_edge);
             }
         }
         Ok(())
@@ -271,7 +304,13 @@ impl NativePanel {
         if let Ok(mut last_target) = self.last_target.lock() {
             *last_target = Some((target.origin.x, target.origin.y, target.size.width, target.size.height));
         }
-        let current_edge = self.current_edge.lock().map(|value| *value).unwrap_or(None);
+        let current_edge = self.animation_target.lock().ok().and_then(|target| match *target {
+            AnimationTarget::Visible { edge, .. } => edge,
+            AnimationTarget::Hidden { .. } => None,
+        });
+        if let Ok(mut animation_target) = self.animation_target.lock() {
+            *animation_target = AnimationTarget::Visible { frame: PanelFrame::from_rect(target), edge: Some(edge) };
+        }
         let start = if was_visible { panel.frame() } else {
             let start_x = match edge {
                 edge_trigger::Edge::Left => target.origin.x - target.size.width,
@@ -286,12 +325,11 @@ impl NativePanel {
         let animation_enabled = self.animation_enabled.lock().map(|value| *value).unwrap_or(true);
         let animation_duration_ms = self.animation_duration_ms.lock().map(|value| *value).unwrap_or(DEFAULT_PANEL_ANIMATION_MS);
         let animation_generation = Arc::clone(&self.animation_generation);
+        let animation_target = Arc::clone(&self.animation_target);
+        let final_edge = Arc::clone(&self.current_edge);
         let generation = animation_generation.fetch_add(1, Ordering::Relaxed) + 1;
         if !animation_enabled {
-            panel.setFrame_display(target, true);
-            if let Ok(mut current_edge) = self.current_edge.lock() {
-                *current_edge = Some(edge);
-            }
+            converge_latest_target(panel, &animation_target, &final_edge);
         } else if was_visible && current_edge.is_some() && current_edge != Some(edge) {
             let old_edge = current_edge.expect("visible panel edge checked above");
             let old_screen = screen_at(
@@ -313,7 +351,8 @@ impl NativePanel {
             let exit_duration_ms = animation_duration_ms / 2;
             let enter_duration_ms = animation_duration_ms - exit_duration_ms;
             let next_generation = Arc::clone(&animation_generation);
-            let next_edge = Arc::clone(&self.current_edge);
+            let next_target = Arc::clone(&animation_target);
+            let next_edge = Arc::clone(&final_edge);
             animate_panel_frame(
                 panel,
                 start,
@@ -332,14 +371,14 @@ impl NativePanel {
                         generation,
                         enter_duration_ms,
                         Some(Box::new(move || {
-                            if let Ok(mut current_edge) = next_edge.lock() {
-                                *current_edge = Some(edge);
-                            }
+                            converge_latest_target(panel, &next_target, &next_edge);
                         })),
                     );
                 })),
             );
         } else {
+            let next_target = Arc::clone(&animation_target);
+            let next_edge = Arc::clone(&final_edge);
             animate_panel_frame(
                 panel,
                 start,
@@ -347,11 +386,10 @@ impl NativePanel {
                 animation_generation,
                 generation,
                 animation_duration_ms,
-                None,
+                Some(Box::new(move || {
+                    converge_latest_target(panel, &next_target, &next_edge);
+                })),
             );
-            if let Ok(mut current_edge) = self.current_edge.lock() {
-                *current_edge = Some(edge);
-            }
         }
         eprintln!(
             "Edgedor edge panel shown: edge={edge:?} app_active={} was_visible={was_visible} was_on_active_space={was_on_active_space} visible={} on_active_space={} target=({:.0},{:.0},{:.0},{:.0}) actual=({:.0},{:.0},{:.0},{:.0})",
@@ -433,36 +471,45 @@ impl NativePanel {
         let panel = self.create()?;
         match action {
             "show" => {
-                self.animation_generation.fetch_add(1, Ordering::Relaxed);
                 let marker = MainThreadMarker::new().ok_or("NSPanel must be shown on the main thread")?;
                 #[allow(deprecated)]
                 NSApplication::sharedApplication(marker).activateIgnoringOtherApps(true);
-                panel.setLevel(NSFloatingWindowLevel);
                 let target = self.resolved_show_target(marker)?;
-                panel.setFrame_display(target, false);
-                panel.orderFrontRegardless();
-                panel.makeKeyAndOrderFront(None::<&AnyObject>);
-                if let Ok(mut current_edge) = self.current_edge.lock() {
-                    *current_edge = None;
+                if let Ok(mut animation_target) = self.animation_target.lock() {
+                    *animation_target = AnimationTarget::Visible { frame: PanelFrame::from_rect(target), edge: None };
                 }
+                self.animation_generation.fetch_add(1, Ordering::Relaxed);
+                converge_latest_target(panel, &self.animation_target, &self.current_edge);
                 Ok((true, true))
             }
             "focus" => {
-                panel.setLevel(NSFloatingWindowLevel);
-                panel.makeKeyAndOrderFront(None::<&AnyObject>);
+                self.animation_generation.fetch_add(1, Ordering::Relaxed);
+                converge_latest_target(panel, &self.animation_target, &self.current_edge);
                 Ok((true, true))
             }
             "hide" => {
                 capture_width_ratio(panel, &self.width_ratio);
                 let animation_enabled = self.animation_enabled.lock().map(|value| *value).unwrap_or(true);
                 let animation_duration_ms = self.animation_duration_ms.lock().map(|value| *value).unwrap_or(DEFAULT_PANEL_ANIMATION_MS);
-                animate_panel_out(panel, animation_enabled, animation_duration_ms, Arc::clone(&self.animation_generation));
-                if let Ok(mut current_edge) = self.current_edge.lock() {
-                    *current_edge = None;
+                let hidden_frame = hidden_panel_frame(panel);
+                if let Ok(mut animation_target) = self.animation_target.lock() {
+                    *animation_target = AnimationTarget::Hidden { frame: hidden_frame };
                 }
+                let generation = self.animation_generation.fetch_add(1, Ordering::Relaxed) + 1;
+                animate_panel_out(
+                    panel,
+                    animation_enabled,
+                    animation_duration_ms,
+                    Arc::clone(&self.animation_generation),
+                    generation,
+                    Arc::clone(&self.animation_target),
+                    Arc::clone(&self.current_edge),
+                );
                 Ok((false, false))
             }
             "lower" => {
+                self.animation_generation.fetch_add(1, Ordering::Relaxed);
+                settle_latest_visible_frame(panel, &self.animation_target, &self.current_edge);
                 let visible = panel.isVisible();
                 if visible {
                     panel.setLevel(NSNormalWindowLevel);
@@ -592,31 +639,30 @@ fn animate_panel_frame(
     let _ = unsafe { NSTimer::scheduledTimerWithTimeInterval_repeats_block(1.0 / 60.0, true, &block) };
 }
 
-fn animate_panel_out(panel: &'static NSPanel, enabled: bool, duration_ms: u64, animation_generation: Arc<AtomicU64>) {
-    if !panel.isVisible() { return; }
-    let current = panel.frame();
-    let marker = match MainThreadMarker::new() { Some(marker) => marker, None => return };
-    let panel_center = NSPoint::new(
-        current.origin.x + current.size.width / 2.0,
-        current.origin.y + current.size.height / 2.0,
-    );
-    let screen = screen_at(panel_center, marker).or_else(|| NSScreen::mainScreen(marker));
-    let Some(screen) = screen else { panel.orderOut(None::<&AnyObject>); return };
-    let frame = screen.visibleFrame();
-    let center_x = current.origin.x + current.size.width / 2.0;
-    let target_x = if center_x < frame.origin.x + frame.size.width / 2.0 {
-        frame.origin.x - current.size.width
-    } else {
-        frame.origin.x + frame.size.width
+fn animate_panel_out(
+    panel: &'static NSPanel,
+    enabled: bool,
+    duration_ms: u64,
+    animation_generation: Arc<AtomicU64>,
+    generation: u64,
+    animation_target: Arc<Mutex<AnimationTarget>>,
+    current_edge: Arc<Mutex<Option<edge_trigger::Edge>>>,
+) {
+    let Some(target) = animation_target.lock().ok().and_then(|target| match *target {
+        AnimationTarget::Hidden { frame } => frame,
+        AnimationTarget::Visible { .. } => None,
+    }) else {
+        converge_latest_target(panel, &animation_target, &current_edge);
+        return;
     };
-    let target = NSRect::new(NSPoint::new(target_x, current.origin.y), current.size);
-    let generation = animation_generation.fetch_add(1, Ordering::Relaxed) + 1;
-    if !enabled {
-        panel.setFrame_display(target, true);
-        panel.orderOut(None::<&AnyObject>);
-        panel.setLevel(NSNormalWindowLevel);
+    if !panel.isVisible() || !enabled {
+        converge_latest_target(panel, &animation_target, &current_edge);
         return;
     }
+    let current = panel.frame();
+    let target = target.rect();
+    let final_target = Arc::clone(&animation_target);
+    let final_edge = Arc::clone(&current_edge);
     animate_panel_frame(
         panel,
         current,
@@ -625,11 +671,80 @@ fn animate_panel_out(panel: &'static NSPanel, enabled: bool, duration_ms: u64, a
         generation,
         duration_ms,
         Some(Box::new(move || {
-            let panel = unsafe { &*(panel as *const NSPanel) };
-            panel.orderOut(None::<&AnyObject>);
-            panel.setLevel(NSNormalWindowLevel);
+            converge_latest_target(panel, &final_target, &final_edge);
         })),
     );
+}
+
+fn hidden_panel_frame(panel: &NSPanel) -> Option<PanelFrame> {
+    let current = panel.frame();
+    let marker = MainThreadMarker::new()?;
+    let panel_center = NSPoint::new(
+        current.origin.x + current.size.width / 2.0,
+        current.origin.y + current.size.height / 2.0,
+    );
+    let screen = screen_at(panel_center, marker).or_else(|| NSScreen::mainScreen(marker))?;
+    let frame = screen.visibleFrame();
+    let center_x = current.origin.x + current.size.width / 2.0;
+    let target_x = if center_x < frame.origin.x + frame.size.width / 2.0 {
+        frame.origin.x - current.size.width
+    } else {
+        frame.origin.x + frame.size.width
+    };
+    Some(PanelFrame::from_rect(NSRect::new(NSPoint::new(target_x, current.origin.y), current.size)))
+}
+
+fn converge_latest_target(
+    panel: &NSPanel,
+    animation_target: &Arc<Mutex<AnimationTarget>>,
+    current_edge: &Arc<Mutex<Option<edge_trigger::Edge>>>,
+) {
+    let target = animation_target.lock().map(|target| *target).unwrap_or(AnimationTarget::Hidden { frame: None });
+    match target {
+        AnimationTarget::Hidden { frame } => {
+            if let Some(frame) = frame.filter(|frame| frame.is_valid()) {
+                panel.setFrame_display(frame.rect(), true);
+            }
+            panel.orderOut(None::<&AnyObject>);
+            panel.setLevel(NSNormalWindowLevel);
+            if let Ok(mut current_edge) = current_edge.lock() {
+                *current_edge = None;
+            }
+        }
+        AnimationTarget::Visible { frame, edge } if frame.is_valid() => {
+            panel.setFrame_display(frame.rect(), true);
+            panel.setLevel(NSFloatingWindowLevel);
+            panel.orderFrontRegardless();
+            panel.makeKeyAndOrderFront(None::<&AnyObject>);
+            if let Ok(mut current_edge) = current_edge.lock() {
+                *current_edge = edge;
+            }
+        }
+        AnimationTarget::Visible { .. } => {
+            panel.orderOut(None::<&AnyObject>);
+            panel.setLevel(NSNormalWindowLevel);
+            if let Ok(mut current_edge) = current_edge.lock() {
+                *current_edge = None;
+            }
+        }
+    }
+}
+
+fn settle_latest_visible_frame(
+    panel: &NSPanel,
+    animation_target: &Arc<Mutex<AnimationTarget>>,
+    current_edge: &Arc<Mutex<Option<edge_trigger::Edge>>>,
+) {
+    let target = animation_target.lock().ok().map(|target| *target);
+    if let Some(AnimationTarget::Visible { frame, edge }) = target {
+        if frame.is_valid() {
+            panel.setFrame_display(frame.rect(), true);
+            panel.orderFrontRegardless();
+            if let Ok(mut current_edge) = current_edge.lock() {
+                *current_edge = edge;
+            }
+        }
+    }
 }
 
 fn saved_width_ratio() -> f64 {
