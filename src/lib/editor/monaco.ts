@@ -4,9 +4,24 @@ import { resolveShortcut, shortcutProfiles } from '../shortcuts';
 
 const languageAliases: Record<string, string> = { js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript', rs: 'rust', py: 'python', md: 'markdown', yml: 'yaml', sh: 'shell' };
 
-export function createEditor(container: HTMLElement, fontSize = 14, language = 'plaintext'): monaco.editor.IStandaloneCodeEditor {
+export interface EditorVisibility {
+  showLineNumbers: boolean;
+  showMinimap: boolean;
+  showFolding: boolean;
+  showGlyphMargin: boolean;
+}
+
+export const DEFAULT_EDITOR_VISIBILITY: EditorVisibility = {
+  showLineNumbers: true,
+  showMinimap: true,
+  showFolding: true,
+  showGlyphMargin: false
+};
+
+export function createEditor(container: HTMLElement, fontSize = 14, language = 'plaintext', visibility: Partial<EditorVisibility> = {}): monaco.editor.IStandaloneCodeEditor {
   const model = monaco.editor.createModel('', languageAliases[language] ?? language);
-  return monaco.editor.create(container, { model, theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'vs-dark' : 'vs', fontFamily: 'SF Mono, Menlo, monospace', fontSize, automaticLayout: true, minimap: { enabled: true }, columnSelection: true, multiCursorModifier: 'alt', padding: { top: 18, bottom: 18 }, wordWrap: 'on' });
+  const options = { ...DEFAULT_EDITOR_VISIBILITY, ...visibility };
+  return monaco.editor.create(container, { model, theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'vs-dark' : 'vs', fontFamily: 'SF Mono, Menlo, monospace', fontSize, automaticLayout: true, lineNumbers: options.showLineNumbers ? 'on' : 'off', minimap: { enabled: options.showMinimap }, folding: options.showFolding, glyphMargin: options.showGlyphMargin, columnSelection: true, multiCursorModifier: 'alt', padding: { top: 18, bottom: 18 }, wordWrap: 'on' });
 }
 
 const commandIds: Record<string, string> = {

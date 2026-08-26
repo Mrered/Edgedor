@@ -8,12 +8,13 @@
   export let fontSize = 14;
   export let shortcutProfile: 'vscode' | 'sublime' | 'jetbrains' | 'vim' = 'vscode';
   export let shortcutOverrides: Record<string, string> = {};
+  export let editorVisibility: Partial<import('../lib/editor/monaco').EditorVisibility> = {};
   export let onChange: (content: string) => void = () => {};
   export let onStateChange: (state: SessionTab['editor']) => void = () => {};
   let host: HTMLDivElement;
   let vimStatus: HTMLDivElement;
   onMount(() => {
-    const editor = createEditor(host, fontSize, tab.language);
+    const editor = createEditor(host, fontSize, tab.language, editorVisibility);
     const vimMode = shortcutProfile === 'vim' ? initVimMode(editor, vimStatus) : undefined;
     if (shortcutProfile !== 'vim') applyShortcutProfile(editor, shortcutProfile, shortcutOverrides);
     editor.setValue(tab.content);
