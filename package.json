@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check:editor-models": "node --experimental-strip-types src/lib/editor/modelRegistry.selfcheck.ts",
     "check:session": "node --experimental-strip-types src/lib/session/selfcheck.ts",
     "check:shortcuts": "node --experimental-strip-types src/lib/shortcuts.selfcheck.ts",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
