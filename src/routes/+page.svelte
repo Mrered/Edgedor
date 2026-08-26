@@ -449,6 +449,7 @@
     window.addEventListener('focus', onWindowFocus);
     void (async () => {
       unlistenQuit = await listen('quit_requested', () => { void requestQuit(); });
+      if (await invoke<boolean>('mark_quit_listener_ready')) void requestQuit();
       unlisten = await listenPanelStatus((next) => {
         if (panelStatusInitialized && status.visible && !next.visible) checkpoint(session);
         status = next;
