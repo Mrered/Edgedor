@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use objc2::runtime::AnyObject;
 use objc2::{sel, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSAutoresizingMaskOptions, NSBackingStoreType, NSEvent, NSEventMask, NSEventModifierFlags, NSMenu, NSMenuItem, NSPanel, NSStatusBar, NSView, NSWindowStyleMask, NSWindowTitleVisibility, NSFloatingWindowLevel, NSScreen};
-use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{NSPoint, NSRect, NSSize, NSString, NSTimer};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 const PANEL_ANIMATION_MS: u64 = 180;
@@ -102,11 +102,21 @@ impl NativePanel {
     pub fn set_edge_modifier(&self, modifier: &str, app: &AppHandle) -> Result<(), String> {
         let flags = edge_trigger::modifier_flags(modifier)?;
         *self.edge_modifier.lock().map_err(|_| "edge modifier state unavailable")? = flags;
-        self.trigger.stop();
-        self.start_edge_trigger(app)
+        let app = app.clone();
+        let dispatch_app = app.clone();
+        app.run_on_main_thread(move || {
+            if let Some(panel) = dispatch_app.try_state::<NativePanel>() {
+                panel.trigger.stop();
+                if let Err(error) = panel.start_edge_trigger(&dispatch_app) {
+                    eprintln!("Edgedor edge trigger restart failed: {error}");
+                }
+            }
+        })
+        .map_err(|error| error.to_string())
     }
 
     pub fn show_at_edge(&self, edge: edge_trigger::Edge) -> Result<(), String> {
+        eprintln!("Edgedor edge trigger fired: {edge:?}");
         let panel = self.create()?;
         let marker = MainThreadMarker::new().ok_or("NSPanel must be shown on the main thread")?;
         let screen = screen_at(NSEvent::mouseLocation(), marker)
@@ -246,32 +256,21 @@ impl NativePanel {
 }
 
 fn animate_panel_frame(panel: &'static NSPanel, start: NSRect, target: NSRect, hide_after: bool) {
-    let steps = 12_u64;
-    for step in 1..=steps {
+    panel.setFrame_display(start, false);
+    panel.setFrame_display_animate(target, true, true);
+    if hide_after {
         let panel = panel as *const NSPanel as usize;
-        let from = start;
-        let to = target;
-        let delay = PANEL_ANIMATION_MS * step / steps;
-        let _ = dispatch2::DispatchQueue::main().after(
-            dispatch2::DispatchTime::NOW.time((delay * 1_000_000) as i64),
-            move || {
-                let panel = unsafe { &*(panel as *const NSPanel) };
-                let progress = step as f64 / steps as f64;
-                let eased = 1.0 - (1.0 - progress) * (1.0 - progress);
-                let frame = NSRect::new(
-                    NSPoint::new(
-                        from.origin.x + (to.origin.x - from.origin.x) * eased,
-                        from.origin.y + (to.origin.y - from.origin.y) * eased,
-                    ),
-                    NSSize::new(
-                        from.size.width + (to.size.width - from.size.width) * eased,
-                        from.size.height + (to.size.height - from.size.height) * eased,
-                    ),
-                );
-                panel.setFrame_display(frame, true);
-                if hide_after && step == steps { panel.orderOut(None::<&AnyObject>); }
-            },
-        );
+        let block = block2::RcBlock::new(move |_timer: std::ptr::NonNull<NSTimer>| {
+            let panel = unsafe { &*(panel as *const NSPanel) };
+            panel.orderOut(None::<&AnyObject>);
+        });
+        let _ = unsafe {
+            NSTimer::scheduledTimerWithTimeInterval_repeats_block(
+                PANEL_ANIMATION_MS as f64 / 1000.0,
+                false,
+                &block,
+            )
+        };
     }
 }
 

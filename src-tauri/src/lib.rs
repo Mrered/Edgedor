@@ -138,7 +138,9 @@ pub fn run() {
                     .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
                 panel.install_dismiss_monitor()
                     .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
-                let _ = panel.start_edge_trigger(app.handle());
+                if let Err(error) = panel.start_edge_trigger(app.handle()) {
+                    eprintln!("Edgedor edge trigger startup failed: {error}");
+                }
             }
             let state = app.state::<PanelState>();
             if let Ok(mut status) = state.0.lock() {
