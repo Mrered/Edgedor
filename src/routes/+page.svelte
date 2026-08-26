@@ -29,6 +29,7 @@
   let notice = '';
   let noticeTimer: number | undefined;
   const t = createTranslator();
+  const languageOptions = ['plaintext', 'javascript', 'typescript', 'json', 'html', 'css', 'markdown', 'python', 'rust', 'go', 'java', 'c', 'cpp', 'csharp', 'shell', 'sql', 'yaml', 'xml'];
   const editorShortcutCommands: Array<{ id: EditorCommand; label: string }> = [
     { id: 'selectNextOccurrence', label: t('selectNextOccurrence') },
     { id: 'selectAllOccurrences', label: t('selectAllOccurrences') },
@@ -110,8 +111,19 @@
     const tabLayout = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['tabLayout'];
     persist({ ...session, settings: { ...session.settings, tabLayout } });
   }
+  function setTopTabBehavior(event: Event) {
+    const topTabBehavior = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['topTabBehavior'];
+    persist({ ...session, settings: { ...session.settings, topTabBehavior } });
+  }
+  function setLanguage(tabId: string, event: Event) {
+    const language = (event.currentTarget as HTMLSelectElement).value;
+    persist(updateTab(session, tabId, { language }));
+  }
   function changeFontSize(delta: number) { persist({ ...session, settings: { ...session.settings, fontSize: Math.max(10, Math.min(32, session.settings.fontSize + delta)) } }); }
   function setEditorVisibility(key: 'showLineNumbers' | 'showMinimap' | 'showFolding' | 'showGlyphMargin', event: Event) {
+    persist({ ...session, settings: { ...session.settings, [key]: (event.currentTarget as HTMLInputElement).checked } });
+  }
+  function setDisplayVisibility(key: 'showBreadcrumbs' | 'showStatusBar', event: Event) {
     persist({ ...session, settings: { ...session.settings, [key]: (event.currentTarget as HTMLInputElement).checked } });
   }
   function openSettings() { overlayOrigin = document.activeElement as HTMLElement | null; showSettings = true; window.setTimeout(() => settingsCloseButton?.focus(), 0); }
@@ -258,6 +270,32 @@
     const files = Array.from(event.dataTransfer?.files ?? []) as (File & { path?: string })[];
     for (const file of files) if (file.path) await openPath(file.path, file.name);
   }
+  function clipboardPath(uri: string): string | undefined {
+    try {
+      const parsed = new URL(uri.trim());
+      if (parsed.protocol !== 'file:' || (parsed.hostname && parsed.hostname !== 'localhost')) return undefined;
+      return decodeURIComponent(parsed.pathname);
+    } catch {
+      return undefined;
+    }
+  }
+  async function openPastedFiles(event: ClipboardEvent) {
+    const clipboard = event.clipboardData;
+    if (!clipboard) return;
+    const paths = new Set<string>();
+    for (const file of Array.from(clipboard.files) as (File & { path?: string })[]) {
+      if (file.path) paths.add(file.path);
+    }
+    const uriList = clipboard.getData('text/uri-list');
+    for (const line of uriList.split(/\r?\n/)) {
+      if (!line || line.startsWith('#')) continue;
+      const path = clipboardPath(line);
+      if (path) paths.add(path);
+    }
+    if (paths.size === 0) return;
+    event.preventDefault();
+    for (const path of paths) await openPath(path);
+  }
   onMount(() => {
     const storedSettings = deserializeSettings(localStorage.getItem(SETTINGS_KEY) ?? '');
     const saved = deserializeSession(localStorage.getItem(SESSION_KEY) ?? '');
@@ -299,6 +337,7 @@
     const onDragOver = (event: DragEvent) => event.preventDefault();
     window.addEventListener('dragover', onDragOver);
     window.addEventListener('drop', openDroppedFile);
+    window.addEventListener('paste', openPastedFiles);
     void (async () => {
       unlisten = await listenPanelStatus((next) => { if (status.visible && !next.visible) persist(session); status = next; });
       unlistenPaths = await listen<string[]>('open_paths', (event) => { for (const path of event.payload) void openPath(path); });
@@ -306,7 +345,7 @@
       for (const path of initialPaths) await openPath(path);
       if (initialPaths.length > 0) await panelAction('show');
     })();
-    return () => { persist(session); unlisten?.(); unlistenPaths?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); };
+    return () => { persist(session); unlisten?.(); unlistenPaths?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); window.removeEventListener('paste', openPastedFiles); };
   });
 </script>
 <svelte:head><title>{t('appTitle')}</title></svelte:head>
@@ -325,7 +364,7 @@
     <button onclick={openSettings} aria-haspopup="dialog">{t('settings')}</button>
     <button class="pin" aria-pressed={pinned} onclick={togglePinned}>{pinned ? t('unpin') : t('pin')}</button>
   </header>
-  <nav class="tabs" aria-label={t('tabsAria')}>
+  <nav class="tabs" class:compressed-tabs={session.settings.tabLayout === 'top' && session.settings.topTabBehavior === 'compress'} aria-label={t('tabsAria')}>
     {#each session.tabs as tab (tab.id)}
       <div class:active={tab.id === activeTab?.id} class="tab-wrap">
         <button class="tab" draggable="true" ondragstart={(event) => startTabDrag(tab.id, event)} onclick={() => persist(focusTab(session, tab.id))} ondblclick={(event) => { event.stopPropagation(); renameTab(tab.id); }} title={`${tab.filePath ?? tab.title}${t('tabDragHint')}`}>{tab.dirty ? '● ' : ''}{tab.title}{tab.kind === 'preview' ? ` · ${t('previewSuffix')}` : ''}</button>
@@ -340,7 +379,7 @@
       {@const tab = groupTab(group)}
       <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={t('groupAria', { id: group.id })} onpointerdown={() => { if (tab) updateEphemeral(focusTab(session, tab.id)); }} onfocusin={() => { if (tab) updateEphemeral(focusTab(session, tab.id)); }} ondragover={(event) => event.preventDefault()} ondrop={(event) => dropTabInGroup(group.id, event)}>
         {#if tab}
-          {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} onRefresh={() => refreshPreview(tab)} />{:else}{#key `${tab.id}:${session.settings.fontSize}:${session.settings.shortcutProfile}:${session.settings.showLineNumbers}:${session.settings.showMinimap}:${session.settings.showFolding}:${session.settings.showGlyphMargin}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} editorVisibility={{ showLineNumbers: session.settings.showLineNumbers, showMinimap: session.settings.showMinimap, showFolding: session.settings.showFolding, showGlyphMargin: session.settings.showGlyphMargin }} onChange={(content) => editContentFor(tab.id, content)} onStateChange={(editor) => editStateFor(tab.id, editor)} />{/key}{/if}
+          {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} onRefresh={() => refreshPreview(tab)} />{:else}<div class="editor-stack">{#if session.settings.showBreadcrumbs}<div class="breadcrumbs" title={tab.filePath ?? tab.title}>{tab.filePath ? tab.filePath.split('/').filter(Boolean).join(' › ') : tab.title}</div>{/if}{#key `${tab.id}:${tab.language}:${session.settings.fontSize}:${session.settings.shortcutProfile}:${session.settings.showLineNumbers}:${session.settings.showMinimap}:${session.settings.showFolding}:${session.settings.showGlyphMargin}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} editorVisibility={{ showLineNumbers: session.settings.showLineNumbers, showMinimap: session.settings.showMinimap, showFolding: session.settings.showFolding, showGlyphMargin: session.settings.showGlyphMargin }} onChange={(content) => editContentFor(tab.id, content)} onStateChange={(editor) => editStateFor(tab.id, editor)} />{/key}{#if session.settings.showStatusBar}<div class="editor-status"><span>{tab.encoding?.toUpperCase() ?? 'UTF-8'} · {tab.lineEnding === '\r\n' ? 'CRLF' : tab.lineEnding === '\r' ? 'CR' : 'LF'}</span><label>{t('languageMode')}<select aria-label={t('languageMode')} value={tab.language} onchange={(event) => setLanguage(tab.id, event)}>{#each languageOptions as language}<option value={language}>{language}</option>{/each}</select></label></div>{/if}</div>{/if}
         {:else}<button class="empty" onclick={() => { const next = addTab(session, createTab(), group.id); persist(next); }}>{t('newGroupTab')}</button>{/if}
       </section>
     {/each}
@@ -368,6 +407,7 @@
         <label>{t('shortcutProfile')}<select aria-label={t('shortcutProfile')} value={session.settings.shortcutProfile} onchange={setShortcutProfile}><option value="vscode">VS Code</option><option value="sublime">Sublime Text</option><option value="jetbrains">JetBrains</option><option value="vim">{t('vimEditor')}</option></select></label>
         <label>{t('edgeModifier')}<select aria-label={t('edgeModifier')} value={session.settings.edgeModifier} onchange={setEdgeModifier}><option value="command">{t('commandKey')}</option><option value="option">{t('optionKey')}</option><option value="control">{t('controlKey')}</option><option value="shift">{t('shiftKey')}</option></select></label>
         <label>{t('tabLayout')}<select aria-label={t('tabLayout')} value={session.settings.tabLayout} onchange={setTabLayout}><option value="top">{t('tabTop')}</option><option value="left">{t('tabLeft')}</option><option value="right">{t('tabRight')}</option></select></label>
+        {#if session.settings.tabLayout === 'top'}<label>{t('topTabBehavior')}<select aria-label={t('topTabBehavior')} value={session.settings.topTabBehavior} onchange={setTopTabBehavior}><option value="scroll">{t('tabScroll')}</option><option value="compress">{t('tabCompress')}</option></select></label>{/if}
         {#if session.groups.length === 2}<label>{t('splitRatio')} <input aria-label={t('splitRatio')} type="range" min="0.2" max="0.8" step="0.05" value={splitRatio()} oninput={setSplitRatio} /></label>{/if}
         <fieldset class="shortcut-list"><legend>{t('customShortcuts')}</legend>{#each editorShortcutCommands as shortcut}<label>{shortcut.label}<input aria-label={t('shortcutAria', { name: shortcut.label })} placeholder={t('shortcutPlaceholder')} value={session.settings.shortcutOverrides[shortcut.id] ?? ''} onchange={(event) => setShortcutOverride(shortcut.id, event)} /></label>{/each}</fieldset>
         <label>{t('fontSize')} <span class="font-controls"><button onclick={() => changeFontSize(-1)}>−</button><output>{session.settings.fontSize}px</output><button onclick={() => changeFontSize(1)}>＋</button></span></label>
@@ -376,6 +416,8 @@
           <label class="checkbox"><input type="checkbox" checked={session.settings.showMinimap} onchange={(event) => setEditorVisibility('showMinimap', event)} />{t('minimap')}</label>
           <label class="checkbox"><input type="checkbox" checked={session.settings.showFolding} onchange={(event) => setEditorVisibility('showFolding', event)} />{t('folding')}</label>
           <label class="checkbox"><input type="checkbox" checked={session.settings.showGlyphMargin} onchange={(event) => setEditorVisibility('showGlyphMargin', event)} />{t('glyphMargin')}</label>
+          <label class="checkbox"><input type="checkbox" checked={session.settings.showBreadcrumbs} onchange={(event) => setDisplayVisibility('showBreadcrumbs', event)} />{t('breadcrumbs')}</label>
+          <label class="checkbox"><input type="checkbox" checked={session.settings.showStatusBar} onchange={(event) => setDisplayVisibility('showStatusBar', event)} />{t('statusBar')}</label>
         </fieldset>
         <label class="checkbox"><input type="checkbox" checked={session.settings.preserveOnRestart} onchange={setPreserveOnRestart} />{t('preserveRestart')}</label>
         <label class="checkbox"><input type="checkbox" checked={session.settings.showMenuBarIcon} onchange={setMenuBarIcon} />{t('showMenuBar')}</label>
@@ -414,6 +456,9 @@
   .toolbar-spacer { flex: 1; }
   .tabs { display: flex; align-items: center; gap: 3px; padding: 0 10px 8px; overflow-x: auto; }
   .tab-wrap { display: flex; align-items: center; border-radius: 7px; background: transparent; }
+  .tabs.compressed-tabs { overflow-x: hidden; }
+  .tabs.compressed-tabs .tab-wrap { min-width: 42px; flex: 1 1 0; overflow: hidden; }
+  .tabs.compressed-tabs .tab { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; }
   .tab-wrap.active { background: color-mix(in srgb, var(--text) 12%, transparent); }
   .tab, .tab-close { border: 0; background: transparent; color: var(--muted); white-space: nowrap; }
   .tab { padding: 5px 3px 5px 9px; }
@@ -425,6 +470,11 @@
   .split-workspace { gap: 1px; background: color-mix(in srgb, var(--text) 12%, transparent); }
   .split-workspace.split-horizontal { flex-direction: column; }
   .editor-group { min-width: 0; min-height: 0; flex: 1; display: flex; background: var(--panel); }
+  .editor-stack { min-width: 0; min-height: 0; flex: 1; display: flex; flex-direction: column; }
+  .breadcrumbs { flex: 0 0 auto; overflow: hidden; padding: 4px 10px; color: var(--muted); border-bottom: 1px solid color-mix(in srgb, var(--text) 8%, transparent); font: 11px/16px ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+  .editor-status { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 24px; padding: 2px 8px; color: var(--muted); border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent); font: 11px/16px ui-monospace, monospace; }
+  .editor-status label { display: flex; align-items: center; gap: 6px; }
+  .editor-status select { max-width: 128px; border: 0; color: var(--muted); background: transparent; font: inherit; }
   .empty { margin: auto; border: 0; border-radius: 8px; padding: 10px 14px; }
   .notice { position: absolute; left: 50%; bottom: 34px; transform: translateX(-50%); max-width: calc(100% - 24px); padding: 7px 12px; border-radius: 9px; color: var(--text); background: color-mix(in srgb, var(--panel) 88%, var(--text)); box-shadow: 0 5px 25px rgba(0,0,0,.18); font-size: 12px; }
   footer { padding: 6px 16px 10px; font-size: 11px; color: var(--muted); }

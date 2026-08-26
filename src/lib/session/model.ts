@@ -63,6 +63,9 @@ export interface SessionSettings {
   showDockIcon: boolean;
   edgeModifier: 'command' | 'option' | 'control' | 'shift';
   tabLayout: 'top' | 'left' | 'right';
+  topTabBehavior: 'scroll' | 'compress';
+  showBreadcrumbs: boolean;
+  showStatusBar: boolean;
   pinned: boolean;
 }
 
@@ -89,6 +92,9 @@ export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
   showDockIcon: false,
   edgeModifier: 'command',
   tabLayout: 'top',
+  topTabBehavior: 'scroll',
+  showBreadcrumbs: true,
+  showStatusBar: true,
   pinned: false
 };
 
@@ -341,6 +347,9 @@ function normalizeSettings(input: Partial<SessionSettings>): SessionSettings {
     showDockIcon: input.showDockIcon ?? DEFAULT_SESSION_SETTINGS.showDockIcon,
     edgeModifier: input.edgeModifier ?? DEFAULT_SESSION_SETTINGS.edgeModifier,
     tabLayout: input.tabLayout ?? DEFAULT_SESSION_SETTINGS.tabLayout,
+    topTabBehavior: input.topTabBehavior ?? DEFAULT_SESSION_SETTINGS.topTabBehavior,
+    showBreadcrumbs: input.showBreadcrumbs ?? DEFAULT_SESSION_SETTINGS.showBreadcrumbs,
+    showStatusBar: input.showStatusBar ?? DEFAULT_SESSION_SETTINGS.showStatusBar,
     pinned: input.pinned ?? DEFAULT_SESSION_SETTINGS.pinned
   };
 }
