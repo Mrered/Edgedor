@@ -2,6 +2,7 @@
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 const MAX_TEXT_FILE_SIZE: u64 = 20 * 1024 * 1024;
 const MAX_PREVIEW_FILE_SIZE: u64 = 200 * 1024 * 1024;
@@ -22,6 +23,11 @@ struct PanelStatus {
 }
 
 struct PanelState(std::sync::Mutex<PanelStatus>);
+
+#[tauri::command]
+fn get_panel_status(state: State<'_, PanelState>) -> Result<PanelStatus, String> {
+    state.0.lock().map(|status| status.clone()).map_err(|_| "panel state unavailable".into())
+}
 
 #[tauri::command]
 fn save_file(path: &str, content: &str, encoding: Option<&str>, line_ending: Option<&str>) -> Result<(), String> {
@@ -340,7 +346,7 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, preview_file, set_panel_pinned, quit_app, mark_quit_listener_ready, cancel_quit_request, startup_paths, set_menu_bar_icon_visible, set_dock_icon_visible, set_edge_modifier, set_edge_trigger_options, set_panel_animation])
+        .invoke_handler(tauri::generate_handler![panel_action, get_panel_status, save_file, open_text_file, preview_file, set_panel_pinned, quit_app, mark_quit_listener_ready, cancel_quit_request, startup_paths, set_menu_bar_icon_visible, set_dock_icon_visible, set_edge_modifier, set_edge_trigger_options, set_panel_animation])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -387,6 +393,26 @@ pub fn run() {
                             state.delivery_failed();
                         }
                     }
+                }
+                shutdown::ExitDecision::PreventAndConfirmWithoutCheckpoint => {
+                    api.prevent_exit();
+                    let app = app.clone();
+                    app.dialog()
+                        .message("恢复状态保存功能尚未准备完成。现在退出可能丢失本次未写入的工作状态。")
+                        .title("退出 Edgedor？")
+                        .kind(MessageDialogKind::Warning)
+                        .buttons(MessageDialogButtons::OkCancelCustom("仍要退出".into(), "取消".into()))
+                        .show(move |confirmed| {
+                            let shutdown = app.state::<std::sync::Mutex<shutdown::ShutdownState>>();
+                            if confirmed {
+                                if let Ok(mut state) = shutdown.lock() {
+                                    state.confirm_exit();
+                                }
+                                app.exit(0);
+                            } else if let Ok(mut state) = shutdown.lock() {
+                                state.cancel_native_confirmation();
+                            }
+                        });
                 }
                 shutdown::ExitDecision::Prevent => api.prevent_exit(),
             }

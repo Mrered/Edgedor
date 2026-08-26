@@ -580,6 +580,7 @@
       else unlistenDragDrop = nextUnlisten;
     }).catch((error) => console.error('Edgedor native drag-drop initialization failed', error));
     void (async () => {
+      let panelStatusEventVersion = 0;
       try {
         unlistenQuit = await listen('quit_requested', () => { void requestQuit(); });
         if (await invoke<boolean>('mark_quit_listener_ready')) void requestQuit();
@@ -588,6 +589,7 @@
         showNotice(String(error));
       }
       unlisten = await listenPanelStatus((next) => {
+        panelStatusEventVersion += 1;
         let checkpointFailed = false;
         let checkpointError: unknown;
         try {
@@ -610,6 +612,16 @@
           showNotice(t('panelHiddenCheckpointFailed'));
         }
       });
+      const versionBeforeSnapshot = panelStatusEventVersion;
+      try {
+        const snapshot = await invoke<PanelStatus>('get_panel_status');
+        if (panelStatusEventVersion === versionBeforeSnapshot) {
+          status = snapshot;
+          panelStatusInitialized = true;
+        }
+      } catch (error) {
+        console.error('Edgedor panel status snapshot failed', error);
+      }
       unlistenPaths = await listen<string[]>('open_paths', (event) => { for (const path of event.payload) void openPath(path); });
       const initialPaths = await invoke<string[]>('startup_paths');
       for (const path of initialPaths) await openPath(path);

@@ -2,6 +2,7 @@
 pub enum ExitDecision {
     Allow,
     PreventAndRequestCheckpoint,
+    PreventAndConfirmWithoutCheckpoint,
     Prevent,
 }
 
@@ -11,6 +12,8 @@ pub struct ShutdownState {
     listener_ready: bool,
     request_delivered: bool,
     exit_confirmed: bool,
+    early_exit_attempts: u8,
+    native_confirmation_pending: bool,
 }
 
 impl ShutdownState {
@@ -24,6 +27,13 @@ impl ShutdownState {
             self.request_delivered = true;
             return ExitDecision::PreventAndRequestCheckpoint;
         }
+        if !self.listener_ready && !self.native_confirmation_pending {
+            self.early_exit_attempts = self.early_exit_attempts.saturating_add(1);
+            if self.early_exit_attempts >= 2 {
+                self.native_confirmation_pending = true;
+                return ExitDecision::PreventAndConfirmWithoutCheckpoint;
+            }
+        }
         ExitDecision::Prevent
     }
 
@@ -31,6 +41,7 @@ impl ShutdownState {
         self.listener_ready = true;
         if self.normal_exit_pending
             && !self.request_delivered
+            && !self.native_confirmation_pending
         {
             self.request_delivered = true;
             return true;
@@ -45,6 +56,12 @@ impl ShutdownState {
     pub fn cancel_request(&mut self) {
         self.normal_exit_pending = false;
         self.request_delivered = false;
+        self.early_exit_attempts = 0;
+        self.native_confirmation_pending = false;
+    }
+
+    pub fn cancel_native_confirmation(&mut self) {
+        self.cancel_request();
     }
 
     pub fn confirm_exit(&mut self) {
@@ -115,11 +132,37 @@ mod tests {
     }
 
     #[test]
-    fn missing_listener_never_allows_fallback() {
+    fn first_early_exit_is_prevented_without_confirmation() {
         let mut state = ShutdownState::default();
-        for _ in 0..10 {
-            assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
-        }
+        assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
+    }
+
+    #[test]
+    fn second_early_exit_requests_only_one_native_confirmation() {
+        let mut state = ShutdownState::default();
+        assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
+        assert_eq!(state.exit_requested(None), ExitDecision::PreventAndConfirmWithoutCheckpoint);
+        assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
+        assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
+    }
+
+    #[test]
+    fn cancelling_native_confirmation_restarts_early_exit_count() {
+        let mut state = ShutdownState::default();
+        assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
+        assert_eq!(state.exit_requested(None), ExitDecision::PreventAndConfirmWithoutCheckpoint);
+        state.cancel_native_confirmation();
+        assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
+        assert_eq!(state.exit_requested(None), ExitDecision::PreventAndConfirmWithoutCheckpoint);
+    }
+
+    #[test]
+    fn confirming_native_fallback_allows_normal_exit() {
+        let mut state = ShutdownState::default();
+        assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
+        assert_eq!(state.exit_requested(None), ExitDecision::PreventAndConfirmWithoutCheckpoint);
+        state.confirm_exit();
+        assert_eq!(state.exit_requested(None), ExitDecision::Allow);
     }
 
     #[test]
