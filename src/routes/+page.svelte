@@ -202,7 +202,23 @@
       if (!update) { showNotice(t('noUpdates')); return; }
       if (!window.confirm(t('updateFound', { version: update.version }))) return;
       await update.downloadAndInstall();
-      checkpoint(session);
+      let checkpointFailed = false;
+      let checkpointError: unknown;
+      try {
+        const result = checkpoint(session);
+        if (!result.ok) {
+          checkpointFailed = true;
+          checkpointError = result.error;
+        }
+      } catch (error) {
+        checkpointFailed = true;
+        checkpointError = error;
+      }
+      if (checkpointFailed) {
+        console.error('Edgedor session checkpoint failed before update restart', checkpointError);
+        showNotice(t('updateRestartCheckpointFailed'));
+        return;
+      }
       await relaunch();
     } catch (error) { showNotice(`${t('updateFailed')}${String(error)}`); }
   }
@@ -572,9 +588,27 @@
         showNotice(String(error));
       }
       unlisten = await listenPanelStatus((next) => {
-        if (panelStatusInitialized && status.visible && !next.visible) checkpoint(session);
-        status = next;
-        panelStatusInitialized = true;
+        let checkpointFailed = false;
+        let checkpointError: unknown;
+        try {
+          if (panelStatusInitialized && status.visible && !next.visible) {
+            const result = checkpoint(session);
+            if (!result.ok) {
+              checkpointFailed = true;
+              checkpointError = result.error;
+            }
+          }
+        } catch (error) {
+          checkpointFailed = true;
+          checkpointError = error;
+        } finally {
+          status = next;
+          panelStatusInitialized = true;
+        }
+        if (checkpointFailed) {
+          console.error('Edgedor session checkpoint failed after panel hide', checkpointError);
+          showNotice(t('panelHiddenCheckpointFailed'));
+        }
       });
       unlistenPaths = await listen<string[]>('open_paths', (event) => { for (const path of event.payload) void openPath(path); });
       const initialPaths = await invoke<string[]>('startup_paths');
