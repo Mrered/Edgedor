@@ -464,7 +464,12 @@
   async function requestQuit() {
     if (quitInProgress) return;
     quitInProgress = true;
-    checkpoint(session);
+    try {
+      checkpoint(session);
+    } catch (error) {
+      console.error('Edgedor session checkpoint failed during quit', error);
+      showNotice(String(error));
+    }
     try {
       await invoke('quit_app');
     } catch (error) {
@@ -525,8 +530,13 @@
     window.addEventListener('blur', onWindowBlur);
     window.addEventListener('focus', onWindowFocus);
     void (async () => {
-      unlistenQuit = await listen('quit_requested', () => { void requestQuit(); });
-      if (await invoke<boolean>('mark_quit_listener_ready')) void requestQuit();
+      try {
+        unlistenQuit = await listen('quit_requested', () => { void requestQuit(); });
+        if (await invoke<boolean>('mark_quit_listener_ready')) void requestQuit();
+      } catch (error) {
+        console.error('Edgedor quit listener initialization failed', error);
+        showNotice(String(error));
+      }
       unlisten = await listenPanelStatus((next) => {
         if (panelStatusInitialized && status.visible && !next.visible) checkpoint(session);
         status = next;

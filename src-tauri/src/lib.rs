@@ -348,9 +348,20 @@ pub fn run() {
                 .unwrap_or(shutdown::ExitDecision::Prevent);
             match decision {
                 shutdown::ExitDecision::Allow => {}
+                shutdown::ExitDecision::AllowFallback(reason) => {
+                    eprintln!("Edgedor exit checkpoint fallback: {reason:?}");
+                }
                 shutdown::ExitDecision::PreventAndRequestCheckpoint => {
                     api.prevent_exit();
-                    let _ = app.emit("quit_requested", ());
+                    if let Err(error) = app.emit("quit_requested", ()) {
+                        eprintln!("Edgedor quit checkpoint delivery failed: {error}");
+                        if let Ok(mut state) = app
+                            .state::<std::sync::Mutex<shutdown::ShutdownState>>()
+                            .lock()
+                        {
+                            state.delivery_failed();
+                        }
+                    }
                 }
                 shutdown::ExitDecision::Prevent => api.prevent_exit(),
             }
