@@ -1,5 +1,42 @@
 export type ShortcutProfile = 'vscode' | 'sublime' | 'jetbrains' | 'vim';
 export type EditorCommand = 'selectNextOccurrence' | 'selectAllOccurrences' | 'addCursorAbove' | 'addCursorBelow' | 'moveLineUp' | 'moveLineDown' | 'deleteLine' | 'toggleComment';
+export type ShortcutModifier = 'Cmd' | 'Ctrl' | 'Alt' | 'Shift';
+
+const LETTER_KEYS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'] as const;
+const DIGIT_KEYS = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'] as const;
+const FUNCTION_KEYS = ['F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'F13', 'F14', 'F15', 'F16', 'F17', 'F18', 'F19', 'F20', 'F21', 'F22', 'F23', 'F24'] as const;
+const NAMED_KEYS = ['Tab', 'Space', 'PageUp', 'PageDown', 'Home', 'End', 'Insert', 'Up', 'Down', 'Left', 'Right', 'Slash', 'Semicolon', 'Equal', 'Comma', 'Minus', 'Period', 'Backquote', 'BracketLeft', 'Backslash', 'BracketRight', 'Quote', 'Backspace', 'Delete', 'Enter', 'Escape'] as const;
+
+export const SHORTCUT_KEYS = [...LETTER_KEYS, ...DIGIT_KEYS, ...FUNCTION_KEYS, ...NAMED_KEYS] as const;
+export type ShortcutKey = typeof SHORTCUT_KEYS[number];
+
+type LetterKey = typeof LETTER_KEYS[number];
+type DigitKey = typeof DIGIT_KEYS[number];
+type FunctionKey = typeof FUNCTION_KEYS[number];
+type NamedKey = typeof NAMED_KEYS[number];
+
+const LETTER_KEY_CODE_NAMES = Object.fromEntries(LETTER_KEYS.map((key) => [key, `Key${key}`])) as Record<LetterKey, string>;
+const DIGIT_KEY_CODE_NAMES = Object.fromEntries(DIGIT_KEYS.map((key) => [key, `Digit${key}`])) as Record<DigitKey, string>;
+const FUNCTION_KEY_CODE_NAMES = Object.fromEntries(FUNCTION_KEYS.map((key) => [key, key])) as Record<FunctionKey, string>;
+const NAMED_KEY_CODE_NAMES = {
+  Tab: 'Tab', Space: 'Space', PageUp: 'PageUp', PageDown: 'PageDown', Home: 'Home', End: 'End', Insert: 'Insert',
+  Up: 'UpArrow', Down: 'DownArrow', Left: 'LeftArrow', Right: 'RightArrow', Slash: 'Slash', Semicolon: 'Semicolon',
+  Equal: 'Equal', Comma: 'Comma', Minus: 'Minus', Period: 'Period', Backquote: 'Backquote', BracketLeft: 'BracketLeft',
+  Backslash: 'Backslash', BracketRight: 'BracketRight', Quote: 'Quote', Backspace: 'Backspace', Delete: 'Delete', Enter: 'Enter', Escape: 'Escape'
+} satisfies Record<NamedKey, string>;
+
+export const SHORTCUT_KEY_CODE_NAMES = {
+  ...LETTER_KEY_CODE_NAMES,
+  ...DIGIT_KEY_CODE_NAMES,
+  ...FUNCTION_KEY_CODE_NAMES,
+  ...NAMED_KEY_CODE_NAMES
+} satisfies Record<ShortcutKey, string>;
+
+export interface ParsedShortcut {
+  modifiers: readonly ShortcutModifier[];
+  key: ShortcutKey;
+  normalized: string;
+}
 
 export const DEFAULT_SHORTCUT_PROFILE: ShortcutProfile = 'vscode';
 
@@ -34,16 +71,33 @@ export function shortcutOverridesFingerprint(overrides: Record<string, string>):
   );
 }
 
+const MODIFIER_ALIASES: Record<string, ShortcutModifier> = {
+  cmd: 'Cmd', command: 'Cmd', meta: 'Cmd', cmdorctrl: 'Cmd',
+  ctrl: 'Ctrl', control: 'Ctrl', alt: 'Alt', option: 'Alt', shift: 'Shift'
+};
+const MODIFIER_ORDER: readonly ShortcutModifier[] = ['Cmd', 'Ctrl', 'Alt', 'Shift'];
+const KEY_ALIASES: Record<string, ShortcutKey> = Object.fromEntries(SHORTCUT_KEYS.map((key) => [key.toLowerCase(), key])) as Record<string, ShortcutKey>;
+Object.assign(KEY_ALIASES, {
+  '/': 'Slash', ';': 'Semicolon', '=': 'Equal', ',': 'Comma', '-': 'Minus', '.': 'Period',
+  '`': 'Backquote', '[': 'BracketLeft', '\\': 'Backslash', ']': 'BracketRight', "'": 'Quote'
+} satisfies Record<string, ShortcutKey>);
+
+export function parseShortcut(binding: string): ParsedShortcut | undefined {
+  const parts = binding.trim().replace(/\s+/g, '').split('+');
+  if (parts.length < 2 || parts.some((part) => part.length === 0)) return undefined;
+  const key = KEY_ALIASES[parts.at(-1)?.toLowerCase() ?? ''];
+  if (!key) return undefined;
+  const modifiers = new Set<ShortcutModifier>();
+  for (const part of parts.slice(0, -1)) {
+    const modifier = MODIFIER_ALIASES[part.toLowerCase()];
+    if (!modifier || modifiers.has(modifier)) return undefined;
+    modifiers.add(modifier);
+  }
+  if (modifiers.size === 0) return undefined;
+  const orderedModifiers = MODIFIER_ORDER.filter((modifier) => modifiers.has(modifier));
+  return { modifiers: orderedModifiers, key, normalized: [...orderedModifiers, key].join('+') };
+}
+
 export function validateShortcut(binding: string): string | undefined {
-  const value = binding.trim().replace(/\s+/g, '');
-  if (!value || value.split('+').some((part) => !part)) return undefined;
-  const parts = value.split('+').map((part) => part.toLowerCase());
-  if (parts.length < 2) return undefined;
-  const modifiers = new Set(['cmd', 'command', 'meta', 'cmdorctrl', 'ctrl', 'control', 'alt', 'option', 'shift']);
-  const key = parts.at(-1) ?? '';
-  if (parts.slice(0, -1).some((part) => !modifiers.has(part))) return undefined;
-  if (new Set(parts.slice(0, -1)).size !== parts.length - 1) return undefined;
-  if (/^[a-z0-9]$/.test(key) || /^f([1-9]|1[0-9]|2[0-4])$/i.test(key)) return value;
-  if (/^(tab|space|pageup|pagedown|home|end|insert|up|down|left|right|slash|semicolon|equal|comma|minus|period|backquote|bracketleft|backslash|bracketright|quote|backspace|delete|enter|escape|[;,=./`'\[\]\\-])$/i.test(key)) return value;
-  return undefined;
+  return parseShortcut(binding)?.normalized;
 }

@@ -46,8 +46,8 @@ assert(parseShortcut('Cmd+Command+D') === undefined && parseShortcut('Ctrl+Contr
 for (const binding of ['D', '7', 'F2', 'Up', 'Delete', 'Cmd+', 'Cmd+Hyper+D', 'Cmd+F25', 'Cmd+Unknown']) {
   assert(validateShortcut(binding) === undefined, `rejects unsupported binding ${binding}`);
 }
-for (const sequence of Object.values(shortcutProfiles.vim)) {
-  assert(sequence === undefined || parseShortcut(sequence) === undefined, `keeps Vim sequence ${sequence} outside Monaco overrides`);
+for (const sequence of ['g*', ':%s', 'ddP', 'ddp', 'dd', 'gcc']) {
+  assert(parseShortcut(sequence) === undefined, `keeps Vim sequence ${sequence} outside Monaco overrides`);
 }
 
 console.log('Edgedor shortcut self-check passed');

@@ -1,6 +1,6 @@
 import * as monaco from 'monaco-editor';
-import type { EditorCommand, ShortcutProfile } from '../shortcuts';
-import { resolveShortcut, shortcutProfiles } from '../shortcuts';
+import type { EditorCommand, ShortcutModifier, ShortcutProfile } from '../shortcuts';
+import { parseShortcut, resolveShortcut, SHORTCUT_KEY_CODE_NAMES, shortcutProfiles } from '../shortcuts';
 
 const languageAliases: Record<string, string> = { js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript', rs: 'rust', py: 'python', md: 'markdown', yml: 'yaml', sh: 'shell' };
 
@@ -36,60 +36,17 @@ const commandIds: Record<EditorCommand, string> = {
 };
 
 export function parseKeybinding(binding: string): number | undefined {
-  const parts = binding.split('+').map((part) => part.trim().toLowerCase());
-  if (parts.length < 2 || parts.some((part) => !part)) return undefined;
-  let value = 0;
-  for (const part of parts.slice(0, -1)) {
-    if (part === 'cmd' || part === 'command' || part === 'meta' || part === 'cmdorctrl') value |= monaco.KeyMod.CtrlCmd;
-    else if (part === 'ctrl' || part === 'control') value |= monaco.KeyMod.WinCtrl;
-    else if (part === 'alt' || part === 'option') value |= monaco.KeyMod.Alt;
-    else if (part === 'shift') value |= monaco.KeyMod.Shift;
-    else return undefined;
-  }
-  const key = parts.at(-1) ?? '';
-  if (key.length === 1 && /[a-z]/.test(key)) return value | (monaco.KeyCode.KeyA + key.charCodeAt(0) - 97);
-  if (key.length === 1 && /[0-9]/.test(key)) return value | (monaco.KeyCode.Digit0 + Number(key));
-  if (/^f([1-9]|1[0-9]|2[0-4])$/.test(key)) return value | (monaco.KeyCode.F1 + Number(key.slice(1)) - 1);
-  const named: Record<string, monaco.KeyCode> = {
-    tab: monaco.KeyCode.Tab,
-    space: monaco.KeyCode.Space,
-    pageup: monaco.KeyCode.PageUp,
-    pagedown: monaco.KeyCode.PageDown,
-    home: monaco.KeyCode.Home,
-    end: monaco.KeyCode.End,
-    insert: monaco.KeyCode.Insert,
-    up: monaco.KeyCode.UpArrow,
-    down: monaco.KeyCode.DownArrow,
-    left: monaco.KeyCode.LeftArrow,
-    right: monaco.KeyCode.RightArrow,
-    slash: monaco.KeyCode.Slash,
-    '/': monaco.KeyCode.Slash,
-    semicolon: monaco.KeyCode.Semicolon,
-    ';': monaco.KeyCode.Semicolon,
-    equal: monaco.KeyCode.Equal,
-    '=': monaco.KeyCode.Equal,
-    comma: monaco.KeyCode.Comma,
-    ',': monaco.KeyCode.Comma,
-    minus: monaco.KeyCode.Minus,
-    '-': monaco.KeyCode.Minus,
-    period: monaco.KeyCode.Period,
-    '.': monaco.KeyCode.Period,
-    backquote: monaco.KeyCode.Backquote,
-    '`': monaco.KeyCode.Backquote,
-    bracketleft: monaco.KeyCode.BracketLeft,
-    '[': monaco.KeyCode.BracketLeft,
-    backslash: monaco.KeyCode.Backslash,
-    '\\': monaco.KeyCode.Backslash,
-    bracketright: monaco.KeyCode.BracketRight,
-    ']': monaco.KeyCode.BracketRight,
-    quote: monaco.KeyCode.Quote,
-    "'": monaco.KeyCode.Quote,
-    backspace: monaco.KeyCode.Backspace,
-    delete: monaco.KeyCode.Delete,
-    enter: monaco.KeyCode.Enter,
-    escape: monaco.KeyCode.Escape
-  };
-  return Object.prototype.hasOwnProperty.call(named, key) ? value | named[key] : undefined;
+  const parsed = parseShortcut(binding);
+  if (!parsed) return undefined;
+  const modifierMasks = {
+    Cmd: monaco.KeyMod.CtrlCmd,
+    Ctrl: monaco.KeyMod.WinCtrl,
+    Alt: monaco.KeyMod.Alt,
+    Shift: monaco.KeyMod.Shift
+  } satisfies Record<ShortcutModifier, number>;
+  const keyCode = monaco.KeyCode[SHORTCUT_KEY_CODE_NAMES[parsed.key] as keyof typeof monaco.KeyCode];
+  if (typeof keyCode !== 'number') return undefined;
+  return parsed.modifiers.reduce((value, modifier) => value | modifierMasks[modifier], keyCode);
 }
 
 export function isValidShortcut(binding: string): boolean {

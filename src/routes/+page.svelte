@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
+  import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { open, save } from '@tauri-apps/plugin-dialog';
   import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
   import { check } from '@tauri-apps/plugin-updater';
@@ -291,7 +292,8 @@
   }
   function internalTabId(event: DragEvent): string | undefined {
     const types = Array.from(event.dataTransfer?.types ?? []);
-    const fromTransfer = types.includes(INTERNAL_TAB_MIME) ? event.dataTransfer?.getData(INTERNAL_TAB_MIME) : '';
+    if (!types.includes(INTERNAL_TAB_MIME)) return undefined;
+    const fromTransfer = event.dataTransfer?.getData(INTERNAL_TAB_MIME) ?? '';
     const tabId = fromTransfer || draggedTabId;
     return tabId && session.tabs.some((tab) => tab.id === tabId) ? tabId : undefined;
   }
@@ -303,11 +305,17 @@
   }
   function dropTabInGroup(groupId: string, event: DragEvent) {
     const tabId = internalTabId(event);
-    if (!tabId) return;
+    if (!tabId) {
+      if (Array.from(event.dataTransfer?.types ?? []).includes(INTERNAL_TAB_MIME)) cleanupTabDrag();
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
-    applyActivation(moveTabToGroup(session, tabId, groupId));
-    cleanupTabDrag();
+    try {
+      applyActivation(moveTabToGroup(session, tabId, groupId));
+    } finally {
+      cleanupTabDrag();
+    }
   }
   function groupTab(group: EditorGroup) { return session.tabs.find((tab) => tab.id === group.activeTabId); }
   function groupStyle(group: EditorGroup) {
@@ -430,11 +438,6 @@
       try { await addPreviewPath(selectedPath); } catch (error) { window.alert(`${t('unsupportedPreview')}${String(error)}`); }
     }
   }
-  async function openDroppedFile(event: DragEvent) {
-    event.preventDefault();
-    const files = Array.from(event.dataTransfer?.files ?? []) as (File & { path?: string })[];
-    for (const file of files) if (file.path) await openPath(file.path, file.name);
-  }
   function clipboardPath(uri: string): string | undefined {
     try {
       const parsed = new URL(uri.trim());
@@ -448,8 +451,9 @@
     const clipboard = event.clipboardData;
     if (!clipboard) return;
     const paths = new Set<string>();
-    for (const file of Array.from(clipboard.files) as (File & { path?: string })[]) {
-      if (file.path) paths.add(file.path);
+    for (const file of Array.from(clipboard.files)) {
+      const path = Reflect.get(file, 'path');
+      if (typeof path === 'string' && path) paths.add(path);
     }
     const uriList = clipboard.getData('text/uri-list');
     for (const line of uriList.split(/\r?\n/)) {
@@ -478,6 +482,8 @@
     }
   }
   onMount(() => {
+    let disposed = false;
+    let unlistenDragDrop: (() => void) | undefined;
     const startup = readStartupState(localStorage);
     const saved = startup.session;
     const settings = { ...startup.settings, pinned: false };
@@ -521,14 +527,23 @@
       if ((event.metaKey || event.ctrlKey) && event.key === ',') { event.preventDefault(); openSettings(); }
     };
     window.addEventListener('keydown', onKeyDown);
-    const onDragOver = (event: DragEvent) => event.preventDefault();
-    window.addEventListener('dragover', onDragOver);
-    window.addEventListener('drop', openDroppedFile);
     window.addEventListener('paste', openPastedFiles);
-    const onWindowBlur = () => { if (status.visible) void panelAction(pinned ? 'lower' : 'hide'); };
+    const onWindowBlur = () => { cleanupTabDrag(); if (status.visible) void panelAction(pinned ? 'lower' : 'hide'); };
     const onWindowFocus = () => { if (status.visible) void panelAction('focus'); };
     window.addEventListener('blur', onWindowBlur);
     window.addEventListener('focus', onWindowFocus);
+    void getCurrentWebview().onDragDropEvent(async (event) => {
+      if (event.payload.type === 'leave') {
+        cleanupTabDrag();
+        return;
+      }
+      if (event.payload.type !== 'drop') return;
+      cleanupTabDrag();
+      for (const path of event.payload.paths) await openPath(path);
+    }).then((nextUnlisten) => {
+      if (disposed) nextUnlisten();
+      else unlistenDragDrop = nextUnlisten;
+    }).catch((error) => console.error('Edgedor native drag-drop initialization failed', error));
     void (async () => {
       try {
         unlistenQuit = await listen('quit_requested', () => { void requestQuit(); });
@@ -547,7 +562,7 @@
       for (const path of initialPaths) await openPath(path);
       if (initialPaths.length > 0) await panelAction('show');
     })();
-    return () => { cleanupSeparatorDrag(); cleanupTabDrag(); unlisten?.(); unlistenPaths?.(); unlistenQuit?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); window.removeEventListener('paste', openPastedFiles); window.removeEventListener('blur', onWindowBlur); window.removeEventListener('focus', onWindowFocus); };
+    return () => { disposed = true; cleanupSeparatorDrag(); cleanupTabDrag(); unlistenDragDrop?.(); unlisten?.(); unlistenPaths?.(); unlistenQuit?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('paste', openPastedFiles); window.removeEventListener('blur', onWindowBlur); window.removeEventListener('focus', onWindowFocus); };
   });
 </script>
 <svelte:head><title>{t('appTitle')}</title></svelte:head>
