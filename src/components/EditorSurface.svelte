@@ -21,7 +21,6 @@
     if (tab.editor.viewState) {
       editor.restoreViewState(tab.editor.viewState as monaco.editor.ICodeEditorViewState);
     }
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP, () => { void editor.getAction('editor.action.quickCommand')?.run(); });
     const subscription = editor.onDidChangeModelContent(() => onChange(editor.getValue()));
     const saveState = () => {
       const viewState = editor.saveViewState();

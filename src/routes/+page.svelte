@@ -22,10 +22,14 @@
   let expiryTimer: number | undefined;
   let showSettings = false;
   let showSearch = false;
+  let showCommands = false;
   let searchQuery = '';
+  let commandQuery = '';
   let searchInput: HTMLInputElement;
   let settingsCloseButton: HTMLButtonElement;
   let searchCloseButton: HTMLButtonElement;
+  let commandInput: HTMLInputElement;
+  let commandIndex = 0;
   let overlayOrigin: HTMLElement | null = null;
   let draggedTabId = '';
   let notice = '';
@@ -156,6 +160,19 @@
   function closeSettings() { showSettings = false; overlayOrigin?.focus(); overlayOrigin = null; }
   function openSearch() { overlayOrigin = document.activeElement as HTMLElement | null; showSearch = true; window.setTimeout(() => searchInput?.focus(), 0); }
   function closeSearch() { showSearch = false; overlayOrigin?.focus(); overlayOrigin = null; }
+  function openCommands() { overlayOrigin = document.activeElement as HTMLElement | null; commandQuery = ''; commandIndex = 0; showCommands = true; window.setTimeout(() => commandInput?.focus(), 0); }
+  function closeCommands() { showCommands = false; overlayOrigin?.focus(); overlayOrigin = null; }
+  const commandEntries = [
+    { id: 'new', label: () => t('newTab'), run: () => newTab() },
+    { id: 'save', label: () => t('save'), run: () => void saveActive() },
+    { id: 'search', label: () => t('search'), run: () => openSearch() },
+    { id: 'settings', label: () => t('settings'), run: () => openSettings() },
+    { id: 'pin', label: () => pinned ? t('unpin') : t('pin'), run: () => void togglePinned() },
+    { id: 'split', label: () => t('split'), run: () => addSplit() },
+    { id: 'close', label: () => t('closed'), run: () => closeActive() }
+  ];
+  $: filteredCommands = commandEntries.filter((command) => command.label().toLocaleLowerCase().includes(commandQuery.trim().toLocaleLowerCase()));
+  function runCommand(command: typeof commandEntries[number]) { closeCommands(); command.run(); }
   function searchResults() {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return [];
@@ -348,8 +365,13 @@
     void invoke('set_panel_animation', { enabled: session.settings.panelAnimationEnabled, durationMs: session.settings.panelAnimationDurationMs });
     expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) { persist(result.state); showNotice(t('tabsExpired', { count: result.expired.length })); } }, 60_000);
     const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === 'p') { if (!status.visible) return; event.preventDefault(); openCommands(); return; }
       if (event.key === 'Escape' && showSearch) { event.preventDefault(); closeSearch(); return; }
       if (event.key === 'Escape' && showSettings) { event.preventDefault(); closeSettings(); return; }
+      if (event.key === 'Escape' && showCommands) { event.preventDefault(); closeCommands(); return; }
+      if (showCommands && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) { event.preventDefault(); commandIndex = (commandIndex + (event.key === 'ArrowDown' ? 1 : filteredCommands.length - 1)) % Math.max(filteredCommands.length, 1); return; }
+      if (showCommands && event.key === 'Enter') { event.preventDefault(); const command = filteredCommands[commandIndex]; if (command) runCommand(command); return; }
+      if (!status.visible) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void saveActive(); }
       if ((event.metaKey || event.ctrlKey) && (event.key === '+' || event.key === '=')) { event.preventDefault(); changeFontSize(1); }
       if ((event.metaKey || event.ctrlKey) && event.key === '-') { event.preventDefault(); changeFontSize(-1); }
@@ -366,6 +388,8 @@
     window.addEventListener('dragover', onDragOver);
     window.addEventListener('drop', openDroppedFile);
     window.addEventListener('paste', openPastedFiles);
+    const onWindowBlur = () => { if (!pinned && status.visible) void panelAction('hide'); };
+    window.addEventListener('blur', onWindowBlur);
     void (async () => {
       unlisten = await listenPanelStatus((next) => { if (status.visible && !next.visible) persist(session); status = next; });
       unlistenPaths = await listen<string[]>('open_paths', (event) => { for (const path of event.payload) void openPath(path); });
@@ -373,7 +397,7 @@
       for (const path of initialPaths) await openPath(path);
       if (initialPaths.length > 0) await panelAction('show');
     })();
-    return () => { persist(session); unlisten?.(); unlistenPaths?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); window.removeEventListener('paste', openPastedFiles); };
+    return () => { persist(session); unlisten?.(); unlistenPaths?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); window.removeEventListener('paste', openPastedFiles); window.removeEventListener('blur', onWindowBlur); };
   });
 </script>
 <svelte:head><title>{t('appTitle')}</title></svelte:head>
@@ -424,6 +448,17 @@
           {#each searchResults() as result (result.tab.id)}
             <button class="search-result" onclick={() => focusSearchResult(result.tab.id)}><strong>{result.tab.title}</strong><span>{result.excerpt}</span></button>
           {/each}
+        </div>
+      </div>
+    </div>
+  {/if}
+  {#if showCommands}
+    <div class="command-backdrop" role="presentation" onclick={(event) => { if (event.target === event.currentTarget) closeCommands(); }}>
+      <div class="command-panel" role="dialog" aria-modal="true" aria-label={t('commandPanel')}>
+        <input bind:this={commandInput} bind:value={commandQuery} placeholder={t('commandPlaceholder')} aria-label={t('commandPlaceholder')} />
+        <div class="command-list">
+          {#if filteredCommands.length === 0}<p>{t('noCommands')}</p>{/if}
+          {#each filteredCommands as command, index (command.id)}<button class:selected={index === commandIndex} onclick={() => runCommand(command)}>{command.label()}</button>{/each}
         </div>
       </div>
     </div>
@@ -514,6 +549,14 @@
   footer { padding: 6px 16px 10px; font-size: 11px; color: var(--muted); }
   .settings-backdrop { position: fixed; inset: 0; z-index: 10; display: flex; justify-content: flex-end; background: rgba(0,0,0,.16); }
   .search-backdrop { position: fixed; inset: 0; z-index: 11; display: grid; place-items: start center; padding-top: 12vh; background: rgba(0,0,0,.16); }
+  .command-backdrop { position: fixed; inset: 0; z-index: 12; display: grid; place-items: start center; padding-top: 10vh; background: rgba(0,0,0,.16); }
+  .command-panel { width: min(560px, 90vw); max-height: 60vh; padding: 10px; display: flex; flex-direction: column; gap: 8px; color: var(--text); background: var(--panel); border-radius: 10px; box-shadow: 0 16px 45px rgba(0,0,0,.25); }
+  .command-panel > input { border: 1px solid color-mix(in srgb, var(--text) 15%, transparent); border-radius: 7px; padding: 9px; color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
+  .command-list { display: flex; flex-direction: column; overflow: auto; gap: 3px; }
+  .command-list button { border: 0; border-radius: 6px; padding: 8px 10px; text-align: left; color: var(--text); background: transparent; }
+  .command-list button:hover { background: color-mix(in srgb, var(--text) 12%, transparent); }
+  .command-list button.selected { background: color-mix(in srgb, var(--text) 12%, transparent); }
+  .command-list p { margin: 8px; color: var(--muted); font-size: 12px; }
   .search-panel { width: min(620px, 90vw); max-height: 70vh; padding: 16px; display: flex; flex-direction: column; gap: 12px; color: var(--text); background: var(--panel); border-radius: 12px; box-shadow: 0 16px 45px rgba(0,0,0,.25); }
   .search-panel > input { border: 1px solid color-mix(in srgb, var(--text) 15%, transparent); border-radius: 7px; padding: 9px; color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
   .search-results { min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 5px; }

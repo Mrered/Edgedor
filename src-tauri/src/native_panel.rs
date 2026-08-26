@@ -12,7 +12,7 @@ use objc2::runtime::AnyObject;
 use objc2::{sel, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSAutoresizingMaskOptions, NSBackingStoreType, NSEvent, NSEventMask, NSEventModifierFlags, NSMenu, NSMenuItem, NSPanel, NSStatusBar, NSView, NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowTitleVisibility, NSFloatingWindowLevel, NSNormalWindowLevel, NSScreen};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString, NSTimer, NSUserDefaults};
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 const DEFAULT_PANEL_ANIMATION_MS: u64 = 180;
 const PANEL_WIDTH_RATIO_KEY: &str = "EdgedorPanelWidthRatio";
@@ -129,6 +129,8 @@ impl NativePanel {
             if let Some(panel) = app.try_state::<NativePanel>() {
                 if let Err(error) = panel.show_at_edge_at(_edge, point) {
                     eprintln!("Edgedor edge panel show failed: {error}");
+                } else {
+                    let _ = app.emit("panel_status", serde_json::json!({"visible": true, "focused": true, "bridgeReady": true}));
                 }
             }
         })
@@ -355,7 +357,7 @@ impl NativePanel {
     /// Install an AppKit global monitor so clicks outside the panel dismiss it.
     /// The panel must remain visible while Edgedor activates across applications,
     /// so this monitor is the single owner of unpinned dismissal behavior.
-    pub fn install_dismiss_monitor(&self) -> Result<(), String> {
+    pub fn install_dismiss_monitor(&self, app: &AppHandle) -> Result<(), String> {
         if self.dismiss_monitor.lock().map_err(|_| "dismiss monitor state unavailable")?.is_some() {
             return Ok(());
         }
@@ -364,6 +366,7 @@ impl NativePanel {
         let width_ratio = self.width_ratio.clone();
         let animation_enabled = self.animation_enabled.clone();
         let animation_duration_ms = self.animation_duration_ms.clone();
+        let app = app.clone();
         let block = block2::RcBlock::new(move |_event: std::ptr::NonNull<NSEvent>| {
             if pinned.lock().map(|value| *value).unwrap_or(true) {
                 return;
@@ -374,6 +377,7 @@ impl NativePanel {
                 let enabled = animation_enabled.lock().map(|value| *value).unwrap_or(true);
                 let duration_ms = animation_duration_ms.lock().map(|value| *value).unwrap_or(DEFAULT_PANEL_ANIMATION_MS);
                 animate_panel_out(panel, enabled, duration_ms);
+                let _ = app.emit("panel_status", serde_json::json!({"visible": false, "focused": false, "bridgeReady": true}));
             }
         });
         let token = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(

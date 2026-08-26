@@ -306,7 +306,7 @@ pub fn run() {
                 native_panel::attach_from_setup(app.handle(), &panel)
                     .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
                 let _ = panel.action("hide");
-                panel.install_dismiss_monitor()
+                panel.install_dismiss_monitor(app.handle())
                     .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
                 if let Err(error) = panel.start_edge_trigger(app.handle()) {
                     eprintln!("Edgedor edge trigger startup failed: {error}");
