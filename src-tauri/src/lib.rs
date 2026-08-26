@@ -77,6 +77,15 @@ fn set_menu_bar_icon_visible(visible: bool, app: AppHandle) -> Result<(), String
 }
 
 #[tauri::command]
+fn set_dock_icon_visible(visible: bool, _app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { native_panel::NativePanel::set_dock_icon_visible(visible)?; }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (visible, _app);
+    Ok(())
+}
+
+#[tauri::command]
 fn set_edge_modifier(modifier: &str, app: AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
@@ -127,7 +136,8 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, preview_file, set_panel_pinned, quit_app, startup_paths, set_menu_bar_icon_visible, set_edge_modifier])
+        .plugin(tauri_plugin_autostart::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![panel_action, save_file, open_text_file, preview_file, set_panel_pinned, quit_app, startup_paths, set_menu_bar_icon_visible, set_dock_icon_visible, set_edge_modifier])
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {

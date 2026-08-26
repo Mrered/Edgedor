@@ -3,6 +3,7 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { open, save } from '@tauri-apps/plugin-dialog';
+  import { enable as enableAutostart, disable as disableAutostart, isEnabled as isAutostartEnabled } from '@tauri-apps/plugin-autostart';
   import EditorSurface from '../components/EditorSurface.svelte';
   import PreviewSurface from '../components/PreviewSurface.svelte';
   import ToolbarMount from '../components/ToolbarMount.svelte';
@@ -82,6 +83,21 @@
   function setShortcutOverride(command: EditorCommand, event: Event) { const raw = (event.currentTarget as HTMLInputElement).value; const value = validateShortcut(raw); const shortcutOverrides = { ...session.settings.shortcutOverrides }; if (raw.trim() && !value) { showNotice('快捷键格式无效，例如 Cmd+Shift+L'); (event.currentTarget as HTMLInputElement).value = shortcutOverrides[command] ?? ''; return; } if (value) shortcutOverrides[command] = value; else delete shortcutOverrides[command]; persist({ ...session, settings: { ...session.settings, shortcutOverrides } }); }
   function setPreserveOnRestart(event: Event) { const preserve = (event.currentTarget as HTMLInputElement).checked; const next = { ...session, settings: { ...session.settings, preserveOnRestart: preserve } }; session = next; persistSettings(next.settings); if (preserve) localStorage.setItem(SESSION_KEY, serializeSession(next)); else localStorage.removeItem(SESSION_KEY); }
   async function setMenuBarIcon(event: Event) { const visible = (event.currentTarget as HTMLInputElement).checked; persist({ ...session, settings: { ...session.settings, showMenuBarIcon: visible } }); await invoke('set_menu_bar_icon_visible', { visible }); }
+  async function setDockIcon(event: Event) {
+    const visible = (event.currentTarget as HTMLInputElement).checked;
+    try { await invoke('set_dock_icon_visible', { visible }); persist({ ...session, settings: { ...session.settings, showDockIcon: visible } }); }
+    catch (error) { (event.currentTarget as HTMLInputElement).checked = false; showNotice(`Dock 图标设置失败：${String(error)}`); }
+  }
+  async function setLaunchAtLogin(event: Event) {
+    const enabled = (event.currentTarget as HTMLInputElement).checked;
+    try {
+      if (enabled) await enableAutostart(); else await disableAutostart();
+      persist({ ...session, settings: { ...session.settings, launchAtLogin: enabled } });
+    } catch (error) {
+      (event.currentTarget as HTMLInputElement).checked = false;
+      showNotice(`登录启动设置失败：${String(error)}`);
+    }
+  }
   async function setEdgeModifier(event: Event) {
     const modifier = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['edgeModifier'];
     persist({ ...session, settings: { ...session.settings, edgeModifier: modifier } });
@@ -93,6 +109,9 @@
     persist({ ...session, settings: { ...session.settings, tabLayout } });
   }
   function changeFontSize(delta: number) { persist({ ...session, settings: { ...session.settings, fontSize: Math.max(10, Math.min(32, session.settings.fontSize + delta)) } }); }
+  function setEditorVisibility(key: 'showLineNumbers' | 'showMinimap' | 'showFolding' | 'showGlyphMargin', event: Event) {
+    persist({ ...session, settings: { ...session.settings, [key]: (event.currentTarget as HTMLInputElement).checked } });
+  }
   function openSettings() { overlayOrigin = document.activeElement as HTMLElement | null; showSettings = true; window.setTimeout(() => settingsCloseButton?.focus(), 0); }
   function closeSettings() { showSettings = false; overlayOrigin?.focus(); overlayOrigin = null; }
   function openSearch() { overlayOrigin = document.activeElement as HTMLElement | null; showSearch = true; window.setTimeout(() => searchInput?.focus(), 0); }
@@ -212,7 +231,7 @@
   onMount(() => {
     const storedSettings = deserializeSettings(localStorage.getItem(SETTINGS_KEY) ?? '');
     const saved = deserializeSession(localStorage.getItem(SESSION_KEY) ?? '');
-    const settings = storedSettings ?? saved?.settings ?? session.settings;
+    const settings = { ...(storedSettings ?? saved?.settings ?? session.settings), pinned: false };
     const restoredBase = saved && settings.preserveOnRestart ? { ...saved, settings } : { ...session, settings };
     const expiredOnStartup = expireTabs(restoredBase);
     const restored = saved && settings.preserveOnRestart
@@ -223,7 +242,11 @@
     persist(restored);
     void rehydratePreviews();
     pinned = session.settings.pinned;
+    void isAutostartEnabled().then((autostartEnabled) => {
+      if (autostartEnabled !== session.settings.launchAtLogin) persist({ ...session, settings: { ...session.settings, launchAtLogin: autostartEnabled } });
+    }).catch(() => { /* autostart is unavailable outside a packaged desktop runtime */ });
     void invoke('set_menu_bar_icon_visible', { visible: session.settings.showMenuBarIcon });
+    void invoke('set_dock_icon_visible', { visible: session.settings.showDockIcon });
     void invoke('set_panel_pinned', { pinned });
     void invoke('set_edge_modifier', { modifier: session.settings.edgeModifier });
     expiryTimer = window.setInterval(() => { const result = expireTabs(session); if (result.expired.length) { persist(result.state); showNotice(`${result.expired.length} 个未访问标签已超时，已放入撤销槽`); } }, 60_000);
@@ -250,7 +273,7 @@
       unlistenPaths = await listen<string[]>('open_paths', (event) => { for (const path of event.payload) void openPath(path); });
       const initialPaths = await invoke<string[]>('startup_paths');
       for (const path of initialPaths) await openPath(path);
-      await panelAction('show');
+      if (initialPaths.length > 0) await panelAction('show');
     })();
     return () => { persist(session); unlisten?.(); unlistenPaths?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('dragover', onDragOver); window.removeEventListener('drop', openDroppedFile); };
   });
@@ -286,7 +309,7 @@
       {@const tab = groupTab(group)}
       <section class="editor-group" style={groupStyle(session.groups.indexOf(group))} aria-label={`编辑分区 ${group.id}`} ondragover={(event) => event.preventDefault()} ondrop={(event) => dropTabInGroup(group.id, event)}>
         {#if tab}
-          {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} onRefresh={() => refreshPreview(tab)} />{:else}{#key `${tab.id}:${session.settings.fontSize}:${session.settings.shortcutProfile}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} onChange={(content) => editContentFor(tab.id, content)} onStateChange={(editor) => editStateFor(tab.id, editor)} />{/key}{/if}
+          {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} onRefresh={() => refreshPreview(tab)} />{:else}{#key `${tab.id}:${session.settings.fontSize}:${session.settings.shortcutProfile}:${session.settings.showLineNumbers}:${session.settings.showMinimap}:${session.settings.showFolding}:${session.settings.showGlyphMargin}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} editorVisibility={{ showLineNumbers: session.settings.showLineNumbers, showMinimap: session.settings.showMinimap, showFolding: session.settings.showFolding, showGlyphMargin: session.settings.showGlyphMargin }} onChange={(content) => editContentFor(tab.id, content)} onStateChange={(editor) => editStateFor(tab.id, editor)} />{/key}{/if}
         {:else}<button class="empty" onclick={() => { const next = addTab(session, createTab(), group.id); persist(next); }}>新建分区标签</button>{/if}
       </section>
     {/each}
@@ -317,8 +340,16 @@
         {#if session.groups.length === 2}<label>分区比例 <input aria-label="分区比例" type="range" min="0.2" max="0.8" step="0.05" value={splitRatio()} oninput={setSplitRatio} /></label>{/if}
         <fieldset class="shortcut-list"><legend>自定义编辑器快捷键</legend>{#each editorShortcutCommands as shortcut}<label>{shortcut.label}<input aria-label={`${shortcut.label}快捷键`} placeholder="留空使用方案默认值" value={session.settings.shortcutOverrides[shortcut.id] ?? ''} onchange={(event) => setShortcutOverride(shortcut.id, event)} /></label>{/each}</fieldset>
         <label>编辑器字号 <span class="font-controls"><button onclick={() => changeFontSize(-1)}>−</button><output>{session.settings.fontSize}px</output><button onclick={() => changeFontSize(1)}>＋</button></span></label>
+        <fieldset class="shortcut-list"><legend>编辑器区域</legend>
+          <label class="checkbox"><input type="checkbox" checked={session.settings.showLineNumbers} onchange={(event) => setEditorVisibility('showLineNumbers', event)} />行号</label>
+          <label class="checkbox"><input type="checkbox" checked={session.settings.showMinimap} onchange={(event) => setEditorVisibility('showMinimap', event)} />Minimap</label>
+          <label class="checkbox"><input type="checkbox" checked={session.settings.showFolding} onchange={(event) => setEditorVisibility('showFolding', event)} />代码折叠</label>
+          <label class="checkbox"><input type="checkbox" checked={session.settings.showGlyphMargin} onchange={(event) => setEditorVisibility('showGlyphMargin', event)} />字形边栏</label>
+        </fieldset>
         <label class="checkbox"><input type="checkbox" checked={session.settings.preserveOnRestart} onchange={setPreserveOnRestart} />重启后恢复最后工作状态</label>
         <label class="checkbox"><input type="checkbox" checked={session.settings.showMenuBarIcon} onchange={setMenuBarIcon} />显示菜单栏图标</label>
+        <label class="checkbox"><input type="checkbox" checked={session.settings.showDockIcon} onchange={setDockIcon} />显示 Dock 图标</label>
+        <label class="checkbox"><input type="checkbox" checked={session.settings.launchAtLogin} onchange={setLaunchAtLogin} />登录时启动 Edgedor</label>
         <p class="settings-note">临时标签 24 小时未访问会过期，并进入可撤销槽。文件只有触发保存时才写回原路径。</p>
         <button class="danger" onclick={clearWorkspace}>清空标签和撤销槽</button>
         <button class="done" onclick={closeSettings}>完成</button>
@@ -373,7 +404,7 @@
   .search-results p { margin: 8px 0; color: var(--muted); font-size: 12px; }
   .search-result { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; border: 0; border-radius: 7px; padding: 8px; text-align: left; color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
   .search-result span { color: var(--muted); font: 11px/1.4 ui-monospace, monospace; }
-  .settings-panel { width: min(360px, 90vw); height: 100%; padding: 20px; display: flex; flex-direction: column; gap: 16px; color: var(--text); background: var(--panel); box-shadow: -10px 0 30px rgba(0,0,0,.15); }
+  .settings-panel { width: min(360px, 90vw); height: 100%; padding: 20px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; color: var(--text); background: var(--panel); box-shadow: -10px 0 30px rgba(0,0,0,.15); }
   .settings-heading { display: flex; align-items: center; justify-content: space-between; }
   .settings-heading h2 { margin: 0; font-size: 18px; }
   .settings-heading button { padding: 2px 8px; font-size: 20px; }

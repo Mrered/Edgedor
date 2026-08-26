@@ -51,10 +51,16 @@ export interface UndoSlot {
 
 export interface SessionSettings {
   preserveOnRestart: boolean;
+  launchAtLogin: boolean;
   shortcutProfile: 'vscode' | 'sublime' | 'jetbrains' | 'vim';
   shortcutOverrides: Record<string, string>;
   fontSize: number;
+  showLineNumbers: boolean;
+  showMinimap: boolean;
+  showFolding: boolean;
+  showGlyphMargin: boolean;
   showMenuBarIcon: boolean;
+  showDockIcon: boolean;
   edgeModifier: 'command' | 'option' | 'control' | 'shift';
   tabLayout: 'top' | 'left' | 'right';
   pinned: boolean;
@@ -71,10 +77,16 @@ export interface SessionState {
 
 export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
   preserveOnRestart: true,
+  launchAtLogin: false,
   shortcutProfile: 'vscode',
   shortcutOverrides: {},
   fontSize: 14,
+  showLineNumbers: true,
+  showMinimap: true,
+  showFolding: true,
+  showGlyphMargin: false,
   showMenuBarIcon: true,
+  showDockIcon: false,
   edgeModifier: 'command',
   tabLayout: 'top',
   pinned: false
@@ -307,10 +319,16 @@ export function deserializeSettings(serialized: string): SessionSettings | undef
 function normalizeSettings(input: Partial<SessionSettings>): SessionSettings {
   return {
     preserveOnRestart: input.preserveOnRestart ?? DEFAULT_SESSION_SETTINGS.preserveOnRestart,
+    launchAtLogin: input.launchAtLogin ?? DEFAULT_SESSION_SETTINGS.launchAtLogin,
     shortcutProfile: input.shortcutProfile ?? DEFAULT_SESSION_SETTINGS.shortcutProfile,
     shortcutOverrides: input.shortcutOverrides ?? {},
     fontSize: input.fontSize ?? DEFAULT_SESSION_SETTINGS.fontSize,
+    showLineNumbers: input.showLineNumbers ?? DEFAULT_SESSION_SETTINGS.showLineNumbers,
+    showMinimap: input.showMinimap ?? DEFAULT_SESSION_SETTINGS.showMinimap,
+    showFolding: input.showFolding ?? DEFAULT_SESSION_SETTINGS.showFolding,
+    showGlyphMargin: input.showGlyphMargin ?? DEFAULT_SESSION_SETTINGS.showGlyphMargin,
     showMenuBarIcon: input.showMenuBarIcon ?? DEFAULT_SESSION_SETTINGS.showMenuBarIcon,
+    showDockIcon: input.showDockIcon ?? DEFAULT_SESSION_SETTINGS.showDockIcon,
     edgeModifier: input.edgeModifier ?? DEFAULT_SESSION_SETTINGS.edgeModifier,
     tabLayout: input.tabLayout ?? DEFAULT_SESSION_SETTINGS.tabLayout,
     pinned: input.pinned ?? DEFAULT_SESSION_SETTINGS.pinned

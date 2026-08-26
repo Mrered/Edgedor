@@ -10,10 +10,11 @@ use std::sync::{Arc, Mutex};
 use objc2::runtime::AnyObject;
 use objc2::{sel, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSAutoresizingMaskOptions, NSBackingStoreType, NSEvent, NSEventMask, NSEventModifierFlags, NSMenu, NSMenuItem, NSPanel, NSStatusBar, NSView, NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowTitleVisibility, NSFloatingWindowLevel, NSNormalWindowLevel, NSScreen};
-use objc2_foundation::{NSPoint, NSRect, NSSize, NSString, NSTimer};
+use objc2_foundation::{NSPoint, NSRect, NSSize, NSString, NSTimer, NSUserDefaults};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 const PANEL_ANIMATION_MS: u64 = 180;
+const PANEL_WIDTH_RATIO_KEY: &str = "EdgedorPanelWidthRatio";
 
 #[path = "edge_trigger.rs"]
 pub mod edge_trigger;
@@ -23,6 +24,7 @@ pub struct NativePanel {
     trigger: edge_trigger::EdgeTrigger,
     edge_modifier: Mutex<NSEventModifierFlags>,
     pinned: Arc<Mutex<bool>>,
+    width_ratio: Arc<Mutex<f64>>,
     last_target: Mutex<Option<(f64, f64, f64, f64)>>,
     status_item: Mutex<Option<usize>>,
     dismiss_monitor: Mutex<Option<usize>>,
@@ -35,6 +37,7 @@ impl Default for NativePanel {
             trigger: edge_trigger::EdgeTrigger::default(),
             edge_modifier: Mutex::new(NSEventModifierFlags::Command),
             pinned: Arc::new(Mutex::new(false)),
+            width_ratio: Arc::new(Mutex::new(saved_width_ratio())),
             last_target: Mutex::new(None),
             status_item: Mutex::new(None),
             dismiss_monitor: Mutex::new(None),
@@ -46,6 +49,12 @@ impl NativePanel {
     pub fn set_accessory_activation_policy() -> Result<(), String> {
         let marker = MainThreadMarker::new().ok_or("application policy must be set on the main thread")?;
         if NSApplication::sharedApplication(marker).setActivationPolicy(NSApplicationActivationPolicy::Accessory) { Ok(()) } else { Err("unable to set accessory activation policy".into()) }
+    }
+
+    pub fn set_dock_icon_visible(visible: bool) -> Result<(), String> {
+        let marker = MainThreadMarker::new().ok_or("Dock policy must be set on the main thread")?;
+        let policy = if visible { NSApplicationActivationPolicy::Regular } else { NSApplicationActivationPolicy::Accessory };
+        if NSApplication::sharedApplication(marker).setActivationPolicy(policy) { Ok(()) } else { Err("unable to set Dock icon policy".into()) }
     }
 
     pub fn install_status_item(&self) -> Result<(), String> {
@@ -121,11 +130,6 @@ impl NativePanel {
         .map_err(|error| error.to_string())
     }
 
-    pub fn show_at_edge(&self, edge: edge_trigger::Edge) -> Result<(), String> {
-        let point = NSEvent::mouseLocation();
-        self.show_at_edge_at(edge, (point.x, point.y))
-    }
-
     fn show_at_edge_at(&self, edge: edge_trigger::Edge, point: (f64, f64)) -> Result<(), String> {
         eprintln!("Edgedor edge trigger fired: {edge:?}");
         let panel = self.create()?;
@@ -140,14 +144,10 @@ impl NativePanel {
             .or_else(|| NSScreen::mainScreen(marker))
             .ok_or("no screen available")?;
         let frame = screen.visibleFrame();
-        let current_width = panel.frame().size.width;
         let was_visible = panel.isVisible();
         let was_on_active_space = panel.isOnActiveSpace();
-        let ratio = if current_width > 1.0 && was_visible && was_on_active_space {
-            (current_width / frame.size.width).clamp(0.20, 0.60)
-        } else {
-            0.35
-        };
+        if was_visible && was_on_active_space { capture_width_ratio(panel, &self.width_ratio); }
+        let ratio = self.width_ratio.lock().map(|ratio| *ratio).unwrap_or(0.35).clamp(0.20, 0.60);
         let width = (frame.size.width * ratio).clamp(320.0, frame.size.width * 0.60);
         let x = match edge { edge_trigger::Edge::Left => frame.origin.x, edge_trigger::Edge::Right => frame.origin.x + frame.size.width - width };
         let target = NSRect::new(NSPoint::new(x, frame.origin.y), NSSize::new(width, frame.size.height));
@@ -197,15 +197,13 @@ impl NativePanel {
         }
         let marker = MainThreadMarker::new().ok_or("NSPanel must be created on the main thread")?;
         let style = NSWindowStyleMask::Titled | NSWindowStyleMask::FullSizeContentView | NSWindowStyleMask::Resizable;
-        let panel = unsafe {
-            NSPanel::initWithContentRect_styleMask_backing_defer(
+        let panel = NSPanel::initWithContentRect_styleMask_backing_defer(
                 NSPanel::alloc(marker),
                 NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(800.0, 600.0)),
                 style,
                 NSBackingStoreType::Buffered,
                 false,
-            )
-        };
+            );
         panel.setTitleVisibility(NSWindowTitleVisibility::Hidden);
         panel.setTitlebarAppearsTransparent(true);
         panel.setBecomesKeyOnlyIfNeeded(false);
@@ -268,6 +266,7 @@ impl NativePanel {
                 Ok((true, true))
             }
             "hide" => {
+                capture_width_ratio(panel, &self.width_ratio);
                 animate_panel_out(panel);
                 Ok((false, false))
             }
@@ -299,12 +298,14 @@ impl NativePanel {
         }
         let panel = self.create()? as *const NSPanel as usize;
         let pinned = self.pinned.clone();
+        let width_ratio = self.width_ratio.clone();
         let block = block2::RcBlock::new(move |_event: std::ptr::NonNull<NSEvent>| {
             if pinned.lock().map(|value| *value).unwrap_or(true) {
                 return;
             }
             let panel = unsafe { &*(panel as *const NSPanel) };
             if panel.isVisible() {
+                capture_width_ratio(panel, &width_ratio);
                 animate_panel_out(panel);
             }
         });
@@ -358,6 +359,23 @@ fn animate_panel_out(panel: &'static NSPanel) {
     };
     let target = NSRect::new(NSPoint::new(target_x, current.origin.y), current.size);
     animate_panel_frame(panel, current, target, true);
+}
+
+fn saved_width_ratio() -> f64 {
+    let ratio = NSUserDefaults::standardUserDefaults().doubleForKey(&NSString::from_str(PANEL_WIDTH_RATIO_KEY));
+    if ratio.is_finite() && (0.20..=0.60).contains(&ratio) { ratio } else { 0.35 }
+}
+
+fn capture_width_ratio(panel: &NSPanel, width_ratio: &Arc<Mutex<f64>>) {
+    let marker = match MainThreadMarker::new() { Some(marker) => marker, None => return };
+    let panel_frame = panel.frame();
+    let center = NSPoint::new(panel_frame.origin.x + panel_frame.size.width / 2.0, panel_frame.origin.y + panel_frame.size.height / 2.0);
+    let Some(screen) = screen_at(center, marker).or_else(|| NSScreen::mainScreen(marker)) else { return };
+    let available_width = screen.visibleFrame().size.width;
+    if available_width <= 1.0 { return; }
+    let ratio = (panel_frame.size.width / available_width).clamp(0.20, 0.60);
+    if let Ok(mut stored_ratio) = width_ratio.lock() { *stored_ratio = ratio; }
+    NSUserDefaults::standardUserDefaults().setDouble_forKey(ratio, &NSString::from_str(PANEL_WIDTH_RATIO_KEY));
 }
 
 struct RetainedPanel;

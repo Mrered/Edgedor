@@ -26,10 +26,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 encoding_rs = "0.8"
+tauri-plugin-autostart = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
 dispatch2 = "0.3"
 objc2 = "0.6"
-objc2-foundation = "0.3"
+objc2-foundation = { version = "0.3", features = ["NSUserDefaults"] }
 objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "block2", "NSApplication", "NSButton", "NSColor", "NSControl", "NSEvent", "NSMenu", "NSMenuItem", "NSPanel", "NSResponder", "NSRunningApplication", "NSStatusBar", "NSStatusBarButton", "NSStatusItem", "NSView", "NSWindow", "NSScreen", "NSGraphics"] }
