@@ -56,7 +56,7 @@ npm run tauri dev
 
 推送 `v*` tag 会触发 `.github/workflows/release.yml`，在 macOS runner 上构建 arm64 `.app` 和 `.dmg`，并自动发布 Release。检查通过的 `main` push 会触发 `.github/workflows/ci.yml`，将同样的安装包作为可下载 artifact 保存 14 天。
 
-Tauri Updater 当前**未启用**：仓库没有 updater 公钥、私钥或 `latest.json`，也不会在 CI 中生成密钥。现阶段请从 GitHub Release 手动下载；后续要启用自动更新时，需要单独生成并安全保存 Tauri updater 私钥、配置 GitHub Actions Secret 和签名公钥后再实施。
+Tauri Updater 已启用。Release 会生成签名的 `.app.tar.gz`、`.sig` 和 `latest.json`；客户端可在设置中检查更新并下载安装。私钥只保存在 GitHub Actions Secret 与发布者本机受限文件中，不进入仓库。
 
 ## 许可证
 
