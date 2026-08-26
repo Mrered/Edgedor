@@ -13,7 +13,8 @@
   import { listenPanelStatus, panelAction, type PanelStatus } from '../lib/tauri/panel';
   import { createTranslator } from '../lib/i18n';
   import { DEFAULT_SESSION_SETTINGS, MAX_EDITOR_GROUPS, MIN_GROUP_RATIO, addTab, applySaveResult, captureSaveRequest, clearSessionCheckpoint, closeTab, createGroup, createSessionState, createTab, expireTabs, focusTab, moveTabToGroup, persistSessionSettings, readStartupState, removeGroup, resizeAdjacentGroups, restoreLatest, touchTab, updateTab, writeSessionCheckpoint, type EditorGroup, type EditorSnapshot, type SessionSettings, type SessionState, type SessionTab } from '../lib/session';
-  import { shortcutOverridesFingerprint, validateShortcut, type EditorCommand } from '../lib/shortcuts';
+  import { validateShortcut, type EditorCommand } from '../lib/shortcuts';
+  import { editorModelRegistry } from '../lib/editor/monaco';
   let status: PanelStatus = { visible: true, focused: true, bridgeReady: false };
   let pinned = false;
   let session: SessionState = createSessionState();
@@ -61,7 +62,10 @@
     { id: 'toggleComment', label: t('toggleComment') }
   ];
   $: activeTab = session.tabs.find((tab) => tab.id === session.groups.find((group) => group.id === session.activeGroupId)?.activeTabId);
-  function applySession(next: SessionState) { session = next; }
+  function applySession(next: SessionState) {
+    session = next;
+    editorModelRegistry.retain(next.tabs.map((tab) => tab.id));
+  }
   function updateSettings(settings: SessionSettings) {
     applySession({ ...session, settings });
     persistSessionSettings(localStorage, settings);
@@ -495,6 +499,15 @@
       : addTab(expiredOnStartup.state, createTab());
     const restoredActiveTabId = restored.groups.find((group) => group.id === restored.activeGroupId)?.activeTabId;
     applySession(restoredActiveTabId ? focusTab(restored, restoredActiveTabId) : restored);
+    if (import.meta.env.DEV && new URLSearchParams(window.location.search).has('editor-model-probe')) {
+      document.documentElement.dataset.editorModelProbe = 'RUNNING';
+      void import('../lib/editor/monacoModel.probe').then(({ runMonacoModelProbe }) => runMonacoModelProbe()).then((result) => {
+        document.documentElement.dataset.editorModelProbe = result;
+      }).catch((error) => {
+        document.documentElement.dataset.editorModelProbe = `FAIL ${String(error)}`;
+        console.error(error);
+      });
+    }
     void rehydratePreviews();
     void rehydrateFileBindings();
     pinned = session.settings.pinned;
@@ -563,7 +576,7 @@
       for (const path of initialPaths) await openPath(path);
       if (initialPaths.length > 0) await panelAction('show');
     })();
-    return () => { disposed = true; cleanupSeparatorDrag(); cleanupTabDrag(); unlistenDragDrop?.(); unlisten?.(); unlistenPaths?.(); unlistenQuit?.(); if (expiryTimer) window.clearInterval(expiryTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('paste', openPastedFiles); window.removeEventListener('blur', onWindowBlur); window.removeEventListener('focus', onWindowFocus); };
+    return () => { disposed = true; cleanupSeparatorDrag(); cleanupTabDrag(); unlistenDragDrop?.(); unlisten?.(); unlistenPaths?.(); unlistenQuit?.(); if (expiryTimer) window.clearInterval(expiryTimer); if (noticeTimer) window.clearTimeout(noticeTimer); window.removeEventListener('keydown', onKeyDown); window.removeEventListener('paste', openPastedFiles); window.removeEventListener('blur', onWindowBlur); window.removeEventListener('focus', onWindowFocus); editorModelRegistry.disposeAll(); };
   });
 </script>
 <svelte:head><title>{t('appTitle')}</title></svelte:head>
@@ -597,7 +610,7 @@
       {@const tab = groupTab(group)}
       <section class="editor-group" style={groupStyle(group)} aria-label={t('groupAria', { id: group.id })} onpointerdown={() => { if (tab) applyActivation(focusTab(session, tab.id)); }} onfocusin={() => { if (tab) applyActivation(focusTab(session, tab.id)); }} ondragover={dragInternalTabOver} ondrop={(event) => dropTabInGroup(group.id, event)}>
         {#if tab}
-          {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} onRefresh={() => refreshPreview(tab)} />{:else}<div class="editor-stack">{#if session.settings.showBreadcrumbs}<div class="breadcrumbs" title={tab.filePath ?? tab.title}>{tab.filePath ? tab.filePath.split('/').filter(Boolean).join(' › ') : tab.title}</div>{/if}{#key `${tab.id}:${tab.language}:${session.settings.fontSize}:${session.settings.shortcutProfile}:${shortcutOverridesFingerprint(session.settings.shortcutOverrides)}:${session.settings.showLineNumbers}:${session.settings.showMinimap}:${session.settings.showFolding}:${session.settings.showGlyphMargin}`}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} editorVisibility={{ showLineNumbers: session.settings.showLineNumbers, showMinimap: session.settings.showMinimap, showFolding: session.settings.showFolding, showGlyphMargin: session.settings.showGlyphMargin }} onChange={(content) => editContentFor(tab.id, content)} onStateChange={(editor) => editStateFor(tab.id, editor)} />{/key}{#if session.settings.showStatusBar}<div class="editor-status"><span>{tab.encoding?.toUpperCase() ?? 'UTF-8'} · {tab.lineEnding === '\r\n' ? 'CRLF' : tab.lineEnding === '\r' ? 'CR' : 'LF'}</span><label>{t('languageMode')}<select aria-label={t('languageMode')} value={tab.language} onchange={(event) => setLanguage(tab.id, event)}>{#each languageOptions as language}<option value={language}>{language}</option>{/each}</select></label></div>{/if}</div>{/if}
+          {#if tab.kind === 'preview'}<PreviewSurface dataUrl={tab.previewDataUrl ?? tab.content} mime={tab.previewMime ?? 'application/octet-stream'} onRefresh={() => refreshPreview(tab)} />{:else}<div class="editor-stack">{#if session.settings.showBreadcrumbs}<div class="breadcrumbs" title={tab.filePath ?? tab.title}>{tab.filePath ? tab.filePath.split('/').filter(Boolean).join(' › ') : tab.title}</div>{/if}{#key tab.id}<EditorSurface tab={tab} fontSize={session.settings.fontSize} shortcutProfile={session.settings.shortcutProfile} shortcutOverrides={session.settings.shortcutOverrides} editorVisibility={{ showLineNumbers: session.settings.showLineNumbers, showMinimap: session.settings.showMinimap, showFolding: session.settings.showFolding, showGlyphMargin: session.settings.showGlyphMargin }} onChange={(content) => editContentFor(tab.id, content)} onStateChange={(editor) => editStateFor(tab.id, editor)} />{/key}{#if session.settings.showStatusBar}<div class="editor-status"><span>{tab.encoding?.toUpperCase() ?? 'UTF-8'} · {tab.lineEnding === '\r\n' ? 'CRLF' : tab.lineEnding === '\r' ? 'CR' : 'LF'}</span><label>{t('languageMode')}<select aria-label={t('languageMode')} value={tab.language} onchange={(event) => setLanguage(tab.id, event)}>{#each languageOptions as language}<option value={language}>{language}</option>{/each}</select></label></div>{/if}</div>{/if}
         {:else}<button class="empty" onclick={() => { const next = addTab(session, createTab(), group.id); applyActivation(next); }}>{t('newGroupTab')}</button>{/if}
       </section>
       {#if index < session.groups.length - 1}
