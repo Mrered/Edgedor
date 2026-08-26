@@ -73,13 +73,13 @@ impl ShutdownState {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExitDecision, ExitFallbackReason, ShutdownState, MAX_BLOCKED_EXIT_ATTEMPTS};
+    use super::{ExitDecision, ShutdownState};
 
     #[test]
     fn restart_exit_code_is_always_allowed() {
         let mut state = ShutdownState::default();
         assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
-        for _ in 0..=MAX_BLOCKED_EXIT_ATTEMPTS {
+        for _ in 0..=3 {
             assert_eq!(state.exit_requested(Some(tauri::RESTART_EXIT_CODE)), ExitDecision::Allow);
         }
         state.mark_listener_ready();
@@ -124,28 +124,29 @@ mod tests {
     }
 
     #[test]
-    fn unconfirmed_delivery_retries_then_allows_fallback() {
+    fn unconfirmed_delivery_never_allows_fallback() {
         let mut state = ShutdownState::default();
         state.mark_listener_ready();
-        for _ in 1..MAX_BLOCKED_EXIT_ATTEMPTS {
+        for _ in 0..10 {
             assert_eq!(state.exit_requested(None), ExitDecision::PreventAndRequestCheckpoint);
         }
-        assert_eq!(
-            state.exit_requested(None),
-            ExitDecision::AllowFallback(ExitFallbackReason::CheckpointUnconfirmed)
-        );
     }
 
     #[test]
-    fn missing_listener_eventually_allows_fallback() {
+    fn missing_listener_never_allows_fallback() {
         let mut state = ShutdownState::default();
-        for _ in 1..MAX_BLOCKED_EXIT_ATTEMPTS {
+        for _ in 0..10 {
             assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
         }
-        assert_eq!(
-            state.exit_requested(None),
-            ExitDecision::AllowFallback(ExitFallbackReason::ListenerUnavailable)
-        );
+    }
+
+    #[test]
+    fn cancelled_checkpoint_can_be_requested_again() {
+        let mut state = ShutdownState::default();
+        state.mark_listener_ready();
+        assert_eq!(state.exit_requested(None), ExitDecision::PreventAndRequestCheckpoint);
+        state.cancel_request();
+        assert_eq!(state.exit_requested(None), ExitDecision::PreventAndRequestCheckpoint);
     }
 
     #[test]

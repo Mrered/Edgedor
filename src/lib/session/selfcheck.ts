@@ -279,7 +279,8 @@ const preservingState = addTab(createSessionState(start), previewTab);
 persistSessionSettings(storage, preservingState.settings);
 assert(storage.operations.length === 1 && storage.operations[0]?.key === SETTINGS_KEY, 'ordinary settings persistence never writes session');
 assert(!storage.operations.some((operation) => operation.type === 'set' && operation.key === SESSION_KEY), 'enabling recovery does not write session');
-writeSessionCheckpoint(storage, preservingState);
+const successfulCheckpoint = writeSessionCheckpoint(storage, preservingState);
+assert(successfulCheckpoint.ok === true && !('error' in successfulCheckpoint), 'successful checkpoint returns an explicit success result');
 const sessionWrite = storage.operations.find((operation) => operation.type === 'set' && operation.key === SESSION_KEY);
 assert(Boolean(sessionWrite?.value), 'enabled recovery checkpoint writes session');
 const checkpoint = JSON.parse(sessionWrite?.value ?? '{}') as { version?: number; tabs?: Array<{ content?: string; previewDataUrl?: string }> };
@@ -292,10 +293,27 @@ const disableOperations = storage.operations.slice(-2);
 assert(disableOperations[0]?.type === 'set' && disableOperations[0].key === SETTINGS_KEY, 'disabling recovery persists settings');
 assert(disableOperations[1]?.type === 'remove' && disableOperations[1].key === SESSION_KEY, 'disabling recovery immediately removes session');
 const beforeDisabledCheckpoint = storage.operations.length;
-writeSessionCheckpoint(storage, disabledState);
+const successfulDisabledCheckpoint = writeSessionCheckpoint(storage, disabledState);
+assert(successfulDisabledCheckpoint.ok === true && !('error' in successfulDisabledCheckpoint), 'successful disabled checkpoint returns an explicit success result');
 const disabledCheckpointOperations = storage.operations.slice(beforeDisabledCheckpoint);
 assert(disabledCheckpointOperations.length === 1 && disabledCheckpointOperations[0]?.type === 'remove', 'disabled checkpoint only removes session');
 assert(!disabledCheckpointOperations.some((operation) => operation.type === 'set' && operation.key === SESSION_KEY), 'disabled checkpoint never writes session');
+
+const setFailure = new Error('set failed');
+const failedEnabledCheckpoint = writeSessionCheckpoint({
+  getItem: () => null,
+  setItem: () => { throw setFailure; },
+  removeItem: () => undefined
+}, preservingState);
+assert(failedEnabledCheckpoint.ok === false && failedEnabledCheckpoint.error === setFailure, 'enabled checkpoint preserves the original setItem error');
+
+const removeFailure = new Error('remove failed');
+const failedDisabledCheckpoint = writeSessionCheckpoint({
+  getItem: () => null,
+  setItem: () => undefined,
+  removeItem: () => { throw removeFailure; }
+}, disabledState);
+assert(failedDisabledCheckpoint.ok === false && failedDisabledCheckpoint.error === removeFailure, 'disabled checkpoint preserves the original removeItem error');
 
 storage.setItem(SESSION_KEY, 'stale');
 clearSessionCheckpoint(storage);
