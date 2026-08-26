@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use objc2::runtime::AnyObject;
 use objc2::{sel, MainThreadMarker, MainThreadOnly};
-use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSAutoresizingMaskOptions, NSBackingStoreType, NSEvent, NSEventMask, NSEventModifierFlags, NSMenu, NSMenuItem, NSPanel, NSStatusBar, NSView, NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowTitleVisibility, NSFloatingWindowLevel, NSScreen};
+use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSAutoresizingMaskOptions, NSBackingStoreType, NSEvent, NSEventMask, NSEventModifierFlags, NSMenu, NSMenuItem, NSPanel, NSStatusBar, NSView, NSWindowCollectionBehavior, NSWindowStyleMask, NSWindowTitleVisibility, NSFloatingWindowLevel, NSNormalWindowLevel, NSScreen};
 use objc2_foundation::{NSPoint, NSRect, NSSize, NSString, NSTimer};
 use tauri::{AppHandle, Manager, WebviewWindow};
 
@@ -23,6 +23,7 @@ pub struct NativePanel {
     trigger: edge_trigger::EdgeTrigger,
     edge_modifier: Mutex<NSEventModifierFlags>,
     pinned: Arc<Mutex<bool>>,
+    last_target: Mutex<Option<(f64, f64, f64, f64)>>,
     status_item: Mutex<Option<usize>>,
     dismiss_monitor: Mutex<Option<usize>>,
 }
@@ -34,6 +35,7 @@ impl Default for NativePanel {
             trigger: edge_trigger::EdgeTrigger::default(),
             edge_modifier: Mutex::new(NSEventModifierFlags::Command),
             pinned: Arc::new(Mutex::new(false)),
+            last_target: Mutex::new(None),
             status_item: Mutex::new(None),
             dismiss_monitor: Mutex::new(None),
         }
@@ -149,6 +151,9 @@ impl NativePanel {
         let width = (frame.size.width * ratio).clamp(320.0, frame.size.width * 0.60);
         let x = match edge { edge_trigger::Edge::Left => frame.origin.x, edge_trigger::Edge::Right => frame.origin.x + frame.size.width - width };
         let target = NSRect::new(NSPoint::new(x, frame.origin.y), NSSize::new(width, frame.size.height));
+        if let Ok(mut last_target) = self.last_target.lock() {
+            *last_target = Some((target.origin.x, target.origin.y, target.size.width, target.size.height));
+        }
         let start = if panel.isVisible() {
             panel.frame()
         } else {
@@ -205,6 +210,9 @@ impl NativePanel {
         panel.setTitlebarAppearsTransparent(true);
         panel.setBecomesKeyOnlyIfNeeded(false);
         panel.setFloatingPanel(true);
+        // Keep the panel visible while activating from another application;
+        // the global click monitor owns unpinned dismissal to avoid AppKit
+        // hiding the panel before a cross-application edge trigger completes.
         panel.setHidesOnDeactivate(false);
         panel.setCollectionBehavior(
             NSWindowCollectionBehavior::CanJoinAllSpaces
@@ -241,11 +249,21 @@ impl NativePanel {
         let panel = self.create()?;
         match action {
             "show" => {
+                let marker = MainThreadMarker::new().ok_or("NSPanel must be shown on the main thread")?;
+                #[allow(deprecated)]
+                NSApplication::sharedApplication(marker).activateIgnoringOtherApps(true);
+                panel.setLevel(NSFloatingWindowLevel);
+                if let Ok(last_target) = self.last_target.lock() {
+                    if let Some((x, y, width, height)) = *last_target {
+                        panel.setFrame_display(NSRect::new(NSPoint::new(x, y), NSSize::new(width, height)), false);
+                    }
+                }
                 panel.orderFrontRegardless();
                 panel.makeKeyAndOrderFront(None::<&AnyObject>);
                 Ok((true, true))
             }
             "focus" => {
+                panel.setLevel(NSFloatingWindowLevel);
                 panel.makeKeyAndOrderFront(None::<&AnyObject>);
                 Ok((true, true))
             }
@@ -259,6 +277,16 @@ impl NativePanel {
 
     pub fn set_pinned(&self, pinned: bool) -> Result<(), String> {
         *self.pinned.lock().map_err(|_| "native panel state unavailable")? = pinned;
+        if let Some(panel) = self.panel() {
+            // Do not delegate this to hidesOnDeactivate: edge activation starts
+            // while another app is active and AppKit can otherwise hide the
+            // panel before activation completes. The click monitor checks the
+            // pinned flag and owns unpinned dismissal.
+            panel.setHidesOnDeactivate(false);
+            if pinned {
+                panel.setLevel(NSFloatingWindowLevel);
+            }
+        }
         Ok(())
     }
 
@@ -299,6 +327,7 @@ fn animate_panel_frame(panel: &'static NSPanel, start: NSRect, target: NSRect, h
         let block = block2::RcBlock::new(move |_timer: std::ptr::NonNull<NSTimer>| {
             let panel = unsafe { &*(panel as *const NSPanel) };
             panel.orderOut(None::<&AnyObject>);
+            panel.setLevel(NSNormalWindowLevel);
         });
         let _ = unsafe {
             NSTimer::scheduledTimerWithTimeInterval_repeats_block(
@@ -314,7 +343,11 @@ fn animate_panel_out(panel: &'static NSPanel) {
     if !panel.isVisible() { return; }
     let current = panel.frame();
     let marker = match MainThreadMarker::new() { Some(marker) => marker, None => return };
-    let screen = screen_at(NSEvent::mouseLocation(), marker).or_else(|| NSScreen::mainScreen(marker));
+    let panel_center = NSPoint::new(
+        current.origin.x + current.size.width / 2.0,
+        current.origin.y + current.size.height / 2.0,
+    );
+    let screen = screen_at(panel_center, marker).or_else(|| NSScreen::mainScreen(marker));
     let Some(screen) = screen else { panel.orderOut(None::<&AnyObject>); return };
     let frame = screen.visibleFrame();
     let center_x = current.origin.x + current.size.width / 2.0;

@@ -109,7 +109,7 @@ fn panel_action(action: &str, app: AppHandle, state: State<'_, PanelState>) -> R
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let state = PanelState(std::sync::Mutex::new(PanelStatus { visible: true, focused: true, bridge_ready: false }));
+    let state = PanelState(std::sync::Mutex::new(PanelStatus { visible: false, focused: false, bridge_ready: false }));
     let builder = tauri::Builder::default().manage(state);
     #[cfg(target_os = "macos")]
     let builder = builder.manage(native_panel::NativePanel::default());
@@ -136,6 +136,7 @@ pub fn run() {
                 let _ = panel.install_status_item();
                 native_panel::attach_from_setup(app.handle(), &panel)
                     .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+                let _ = panel.action("hide");
                 panel.install_dismiss_monitor()
                     .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
                 if let Err(error) = panel.start_edge_trigger(app.handle()) {
