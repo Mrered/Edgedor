@@ -1,6 +1,11 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use serde::Serialize;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter, Manager, State};
+
+const MAX_TEXT_FILE_SIZE: u64 = 20 * 1024 * 1024;
+const MAX_PREVIEW_FILE_SIZE: u64 = 200 * 1024 * 1024;
+const MAX_GENERATED_PREVIEW_SIZE: u64 = 25 * 1024 * 1024;
 
 #[cfg(target_os = "macos")]
 mod native_panel;
@@ -17,7 +22,15 @@ struct PanelState(std::sync::Mutex<PanelStatus>);
 
 #[tauri::command]
 fn save_file(path: &str, content: &str, encoding: Option<&str>, line_ending: Option<&str>) -> Result<(), String> {
-    if path.is_empty() { return Err("save path is empty".into()); }
+    if path.is_empty() { return Err("保存路径为空".into()); }
+    let target = Path::new(path);
+    if target.exists() && !target.is_file() {
+        return Err("无法写回原文件：绑定路径已不是普通文件".into());
+    }
+    let parent = target.parent().ok_or("无法写回文件：保存路径无效")?;
+    if !parent.is_dir() {
+        return Err("无法写回原文件：原目录已不存在，请另存为新文件".into());
+    }
     let source = content.replace("\r\n", "\n").replace('\r', "\n");
     let normalized = match line_ending.unwrap_or("\n") { "\r\n" => source.replace('\n', "\r\n"), "\r" => source.replace('\n', "\r"), _ => source };
     let bytes = match encoding.unwrap_or("utf-8").to_ascii_lowercase().as_str() {
@@ -27,7 +40,7 @@ fn save_file(path: &str, content: &str, encoding: Option<&str>, line_ending: Opt
         "gb18030" => encoding_rs::GB18030.encode(&normalized).0.into_owned(),
         _ => normalized.as_bytes().to_vec(),
     };
-    std::fs::write(path, bytes).map_err(|error| error.to_string())
+    std::fs::write(target, bytes).map_err(|error| format!("无法写回文件：{error}"))
 }
 
 #[derive(Serialize)]
@@ -38,10 +51,11 @@ struct PreviewFile { path: String, data_url: String, mime: String }
 
 #[tauri::command]
 fn open_text_file(path: &str) -> Result<OpenedFile, String> {
-    let size = std::fs::metadata(path).map_err(|error| format!("无法读取文件信息：{error}"))?.len();
-    if size > 20 * 1024 * 1024 { return Err("文本文件超过 20 MB 限制".into()); }
+    let metadata = std::fs::metadata(path).map_err(|error| format!("无法读取文件信息：{error}"))?;
+    if !metadata.is_file() { return Err("所选路径不是普通文件".into()); }
+    if metadata.len() > MAX_TEXT_FILE_SIZE { return Err("文本文件超过 20 MB 限制".into()); }
     let bytes = std::fs::read(path).map_err(|error| format!("不支持或无法读取此文件：{error}"))?;
-    let (encoding, content) = if bytes.starts_with(&[0xFF, 0xFE]) { ("utf-16le", encoding_rs::UTF_16LE.decode(&bytes[2..]).0.into_owned()) } else if bytes.starts_with(&[0xFE, 0xFF]) { ("utf-16be", encoding_rs::UTF_16BE.decode(&bytes[2..]).0.into_owned()) } else if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) { ("utf-8-bom", String::from_utf8_lossy(&bytes[3..]).into_owned()) } else if let Ok(content) = std::str::from_utf8(&bytes) { ("utf-8", content.to_string()) } else { ("gb18030", encoding_rs::GB18030.decode(&bytes).0.into_owned()) };
+    let (encoding, content) = decode_text(&bytes)?;
     let language = std::path::Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or("plaintext").to_ascii_lowercase();
     let line_ending = if content.contains("\r\n") { "\r\n" } else if content.contains('\r') { "\r" } else { "\n" };
     Ok(OpenedFile { path: path.to_string(), content, language, encoding: encoding.to_string(), line_ending: line_ending.to_string() })
@@ -49,11 +63,122 @@ fn open_text_file(path: &str) -> Result<OpenedFile, String> {
 
 #[tauri::command]
 fn preview_file(path: &str) -> Result<PreviewFile, String> {
-    let extension = std::path::Path::new(path).extension().and_then(|ext| ext.to_str()).unwrap_or("").to_ascii_lowercase();
-    let mime = match extension.as_str() { "png" => "image/png", "jpg" | "jpeg" => "image/jpeg", "gif" => "image/gif", "webp" => "image/webp", "pdf" => "application/pdf", _ => return Err("此文件不支持预览".into()) };
-    let bytes = std::fs::read(path).map_err(|error| error.to_string())?;
+    let source = Path::new(path);
+    let metadata = std::fs::metadata(source).map_err(|error| format!("无法读取预览文件：{error}"))?;
+    if !metadata.is_file() { return Err("所选路径不是普通文件".into()); }
+    if metadata.len() > MAX_PREVIEW_FILE_SIZE { return Err("预览文件超过 200 MB 限制".into()); }
+    let bytes = std::fs::read(source).map_err(|error| format!("无法读取预览文件：{error}"))?;
+    let mime = detect_embeddable_preview(&bytes);
+    let (bytes, mime) = match mime {
+        Some(mime) => (bytes, mime),
+        None => (quick_look_thumbnail(source)?, "image/png"),
+    };
     let data_url = format!("data:{mime};base64,{}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, bytes));
     Ok(PreviewFile { path: path.to_string(), data_url, mime: mime.to_string() })
+}
+
+fn decode_text(bytes: &[u8]) -> Result<(&'static str, String), String> {
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        let (content, _, had_errors) = encoding_rs::UTF_16LE.decode(&bytes[2..]);
+        return (!had_errors).then(|| ("utf-16le", content.into_owned())).ok_or_else(|| "文件不是有效的 UTF-16LE 文本".into());
+    }
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        let (content, _, had_errors) = encoding_rs::UTF_16BE.decode(&bytes[2..]);
+        return (!had_errors).then(|| ("utf-16be", content.into_owned())).ok_or_else(|| "文件不是有效的 UTF-16BE 文本".into());
+    }
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        let content = std::str::from_utf8(&bytes[3..]).map_err(|_| "文件带有 UTF-8 标记，但内容不是有效文本")?;
+        return Ok(("utf-8-bom", content.to_string()));
+    }
+    if looks_binary(bytes) { return Err("检测到二进制内容，未作为文本打开".into()); }
+    if let Ok(content) = std::str::from_utf8(bytes) { return Ok(("utf-8", content.to_string())); }
+    let (content, _, had_errors) = encoding_rs::GB18030.decode(bytes);
+    if had_errors || looks_binary_text(&content) {
+        return Err("无法识别为受支持的文本编码".into());
+    }
+    Ok(("gb18030", content.into_owned()))
+}
+
+fn looks_binary(bytes: &[u8]) -> bool {
+    if bytes.is_empty() { return false; }
+    if bytes.iter().any(|byte| *byte == 0) { return true; }
+    let controls = bytes.iter().filter(|byte| **byte < 0x20 && !matches!(**byte, b'\t' | b'\n' | b'\r' | 0x0C)).count();
+    controls * 100 > bytes.len()
+}
+
+fn looks_binary_text(content: &str) -> bool {
+    let count = content.chars().count();
+    if count == 0 { return false; }
+    let controls = content.chars().filter(|character| character.is_control() && !matches!(*character, '\t' | '\n' | '\r')).count();
+    controls * 100 > count
+}
+
+fn detect_embeddable_preview(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"%PDF-") { return Some("application/pdf"); }
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") { return Some("image/png"); }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) { return Some("image/jpeg"); }
+    if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") { return Some("image/gif"); }
+    if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" { return Some("image/webp"); }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn quick_look_thumbnail(source: &Path) -> Result<Vec<u8>, String> {
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|error| error.to_string())?.as_nanos();
+    let output_dir: PathBuf = std::env::temp_dir().join(format!("edgedor-quicklook-{}-{nonce}", std::process::id()));
+    std::fs::create_dir(&output_dir).map_err(|error| format!("无法创建 Quick Look 临时目录：{error}"))?;
+    let result = (|| {
+        let output = Command::new("/usr/bin/qlmanage")
+            .args(["-t", "-x", "-s", "1600", "-o"])
+            .arg(&output_dir)
+            .arg(source)
+            .output()
+            .map_err(|error| format!("无法调用系统 Quick Look：{error}"))?;
+        if !output.status.success() { return Err("macOS Quick Look 不支持此文件".into()); }
+        let preview_path = std::fs::read_dir(&output_dir)
+            .map_err(|error| format!("无法读取 Quick Look 输出：{error}"))?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .find(|path| path.extension().is_some_and(|extension| extension.eq_ignore_ascii_case("png")))
+            .ok_or_else(|| "macOS Quick Look 未生成可显示的预览".to_string())?;
+        let metadata = std::fs::metadata(&preview_path).map_err(|error| format!("无法读取 Quick Look 输出：{error}"))?;
+        if metadata.len() > MAX_GENERATED_PREVIEW_SIZE { return Err("Quick Look 预览超过 25 MB 限制".into()); }
+        std::fs::read(preview_path).map_err(|error| format!("无法读取 Quick Look 预览：{error}"))
+    })();
+    let _ = std::fs::remove_dir_all(&output_dir);
+    result
+}
+
+#[cfg(not(target_os = "macos"))]
+fn quick_look_thumbnail(_source: &Path) -> Result<Vec<u8>, String> {
+    Err("此文件不支持预览".into())
+}
+
+#[cfg(test)]
+mod file_tests {
+    use super::{decode_text, detect_embeddable_preview};
+
+    #[test]
+    fn rejects_binary_instead_of_guessing_gb18030() {
+        assert!(decode_text(b"PK\x03\x04\0\0\0binary").is_err());
+        assert!(decode_text(&[1, 2, 3, 4, 5, 6, 7, 8]).is_err());
+    }
+
+    #[test]
+    fn accepts_supported_text_encodings() {
+        assert_eq!(decode_text("临时代码".as_bytes()).unwrap().0, "utf-8");
+        let (encoded, _, _) = encoding_rs::GB18030.encode("临时代码");
+        assert_eq!(decode_text(&encoded).unwrap().0, "gb18030");
+    }
+
+    #[test]
+    fn preview_type_comes_from_signature() {
+        assert_eq!(detect_embeddable_preview(b"%PDF-1.7"), Some("application/pdf"));
+        assert_eq!(detect_embeddable_preview(b"not really a png"), None);
+    }
 }
 
 #[tauri::command]
