@@ -42,16 +42,17 @@ impl ShutdownState {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExitDecision, ShutdownState};
+    use super::{ExitDecision, ExitFallbackReason, ShutdownState, MAX_BLOCKED_EXIT_ATTEMPTS};
 
     #[test]
     fn restart_exit_code_is_always_allowed() {
         let mut state = ShutdownState::default();
         assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
-        assert_eq!(
-            state.exit_requested(Some(tauri::RESTART_EXIT_CODE)),
-            ExitDecision::Allow
-        );
+        for _ in 0..=MAX_BLOCKED_EXIT_ATTEMPTS {
+            assert_eq!(state.exit_requested(Some(tauri::RESTART_EXIT_CODE)), ExitDecision::Allow);
+        }
+        state.mark_listener_ready();
+        assert_eq!(state.exit_requested(None), ExitDecision::PreventAndRequestCheckpoint);
     }
 
     #[test]
@@ -65,14 +66,15 @@ mod tests {
     }
 
     #[test]
-    fn repeated_normal_exit_waits_without_requesting_again() {
+    fn emit_failure_can_be_retried() {
         let mut state = ShutdownState::default();
         assert!(!state.mark_listener_ready());
         assert_eq!(
             state.exit_requested(None),
             ExitDecision::PreventAndRequestCheckpoint
         );
-        assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
+        state.delivery_failed();
+        assert_eq!(state.exit_requested(None), ExitDecision::PreventAndRequestCheckpoint);
     }
 
     #[test]
@@ -88,6 +90,38 @@ mod tests {
         assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
         assert!(state.mark_listener_ready());
         assert!(!state.mark_listener_ready());
-        assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
+    }
+
+    #[test]
+    fn unconfirmed_delivery_retries_then_allows_fallback() {
+        let mut state = ShutdownState::default();
+        state.mark_listener_ready();
+        for _ in 1..MAX_BLOCKED_EXIT_ATTEMPTS {
+            assert_eq!(state.exit_requested(None), ExitDecision::PreventAndRequestCheckpoint);
+        }
+        assert_eq!(
+            state.exit_requested(None),
+            ExitDecision::AllowFallback(ExitFallbackReason::CheckpointUnconfirmed)
+        );
+    }
+
+    #[test]
+    fn missing_listener_eventually_allows_fallback() {
+        let mut state = ShutdownState::default();
+        for _ in 1..MAX_BLOCKED_EXIT_ATTEMPTS {
+            assert_eq!(state.exit_requested(None), ExitDecision::Prevent);
+        }
+        assert_eq!(
+            state.exit_requested(None),
+            ExitDecision::AllowFallback(ExitFallbackReason::ListenerUnavailable)
+        );
+    }
+
+    #[test]
+    fn repeated_confirmation_is_idempotent() {
+        let mut state = ShutdownState::default();
+        state.confirm_exit();
+        state.confirm_exit();
+        assert_eq!(state.exit_requested(None), ExitDecision::Allow);
     }
 }
