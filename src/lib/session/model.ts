@@ -19,6 +19,7 @@ export interface SessionTab {
   title: string;
   content: string;
   language: string;
+  languageManuallySelected?: boolean;
   groupId: string;
   filePath?: string;
   encoding?: string;
@@ -59,6 +60,7 @@ export interface SessionSettings {
   showMinimap: boolean;
   showFolding: boolean;
   showGlyphMargin: boolean;
+  showTabs: boolean;
   showMenuBarIcon: boolean;
   showDockIcon: boolean;
   edgeModifier: 'command' | 'option' | 'control' | 'shift';
@@ -93,6 +95,7 @@ export const DEFAULT_SESSION_SETTINGS: SessionSettings = {
   showMinimap: true,
   showFolding: true,
   showGlyphMargin: false,
+  showTabs: true,
   showMenuBarIcon: true,
   showDockIcon: false,
   edgeModifier: 'command',
@@ -353,6 +356,7 @@ function normalizeSettings(input: Partial<SessionSettings>): SessionSettings {
     showMinimap: input.showMinimap ?? DEFAULT_SESSION_SETTINGS.showMinimap,
     showFolding: input.showFolding ?? DEFAULT_SESSION_SETTINGS.showFolding,
     showGlyphMargin: input.showGlyphMargin ?? DEFAULT_SESSION_SETTINGS.showGlyphMargin,
+    showTabs: input.showTabs ?? DEFAULT_SESSION_SETTINGS.showTabs,
     showMenuBarIcon: input.showMenuBarIcon ?? DEFAULT_SESSION_SETTINGS.showMenuBarIcon,
     showDockIcon: input.showDockIcon ?? DEFAULT_SESSION_SETTINGS.showDockIcon,
     edgeModifier: input.edgeModifier ?? DEFAULT_SESSION_SETTINGS.edgeModifier,

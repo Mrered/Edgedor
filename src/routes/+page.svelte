@@ -77,7 +77,24 @@
     if (noticeTimer) window.clearTimeout(noticeTimer);
     noticeTimer = window.setTimeout(() => { notice = ''; }, 4200);
   }
-  function editContentFor(tabId: string, content: string) { updateEphemeral(touchTab(updateTab(session, tabId, { content }), tabId)); }
+  function detectLanguage(content: string): string {
+    const sample = content.trimStart().slice(0, 4000);
+    if (!sample) return 'plaintext';
+    if (/^\s*(?:#!.*(?:bash|zsh|sh)|(?:export|set)\s+\w+=)/m.test(sample)) return 'shell';
+    if (/^\s*(?:fn\s+\w+|use\s+\w+::|impl(?:<.*>)?\s+\w+)/m.test(sample)) return 'rust';
+    if (/^\s*(?:def\s+\w+|from\s+\w+\s+import|import\s+\w+)/m.test(sample) && /:\s*(?:#.*)?$/m.test(sample)) return 'python';
+    if (/^\s*(?:package\s+\w+|func\s+\w+\s*\()/m.test(sample)) return 'go';
+    if (/^\s*<[!a-zA-Z][\s\S]*>/.test(sample)) return 'html';
+    if (/^\s*[\[{][\s\S]*[\]}]\s*$/.test(sample)) { try { JSON.parse(sample); return 'json'; } catch { /* continue */ } }
+    if (/\b(?:const|let|var|function|interface|type|import|export)\b/.test(sample)) return /:\s*(?:string|number|boolean|unknown|any)\b|\binterface\b|\btype\s+\w+\s*=/.test(sample) ? 'typescript' : 'javascript';
+    if (/^\s*#{1,6}\s+\S|```/m.test(sample)) return 'markdown';
+    return 'plaintext';
+  }
+  function editContentFor(tabId: string, content: string) {
+    const tab = session.tabs.find((candidate) => candidate.id === tabId);
+    const language = tab?.kind === 'temporary' && !tab.languageManuallySelected ? detectLanguage(content) : tab?.language;
+    updateEphemeral(touchTab(updateTab(session, tabId, { content, ...(language ? { language } : {}) }), tabId));
+  }
   function editContent(content: string) { if (activeTab) editContentFor(activeTab.id, content); }
   function editStateFor(tabId: string, editor: EditorSnapshot) { updateEphemeral(updateTab(session, tabId, { editor })); }
   async function saveActive() {
@@ -89,7 +106,15 @@
   }
   async function togglePinned() { pinned = !pinned; persist({ ...session, settings: { ...session.settings, pinned } }); await invoke('set_panel_pinned', { pinned }); }
   function setShortcutProfile(event: Event) { const value = (event.currentTarget as HTMLSelectElement).value as SessionState['settings']['shortcutProfile']; persist({ ...session, settings: { ...session.settings, shortcutProfile: value } }); }
-  function setShortcutOverride(command: EditorCommand, event: Event) { const raw = (event.currentTarget as HTMLInputElement).value; const value = validateShortcut(raw); const shortcutOverrides = { ...session.settings.shortcutOverrides }; if (raw.trim() && !value) { showNotice(t('invalidShortcut')); (event.currentTarget as HTMLInputElement).value = shortcutOverrides[command] ?? ''; return; } if (value) shortcutOverrides[command] = value; else delete shortcutOverrides[command]; persist({ ...session, settings: { ...session.settings, shortcutOverrides } }); }
+  function normalizedShortcutBinding(binding: string): string {
+    const aliases: Record<string, string> = { command: 'cmd', meta: 'cmd', cmdorctrl: 'cmd', control: 'ctrl', option: 'alt' };
+    const modifierOrder = ['cmd', 'ctrl', 'alt', 'shift'];
+    const parts = binding.toLowerCase().split('+').map((part) => aliases[part] ?? part);
+    const key = parts.at(-1) ?? '';
+    const modifiers = parts.slice(0, -1).sort((first, second) => modifierOrder.indexOf(first) - modifierOrder.indexOf(second));
+    return [...modifiers, key].join('+');
+  }
+  function setShortcutOverride(command: EditorCommand, event: Event) { const raw = (event.currentTarget as HTMLInputElement).value; const value = validateShortcut(raw); const shortcutOverrides = { ...session.settings.shortcutOverrides }; if (raw.trim() && !value) { showNotice(t('invalidShortcut')); (event.currentTarget as HTMLInputElement).value = shortcutOverrides[command] ?? ''; return; } if (value && Object.entries(shortcutOverrides).some(([id, binding]) => id !== command && normalizedShortcutBinding(binding) === normalizedShortcutBinding(value))) { showNotice(t('shortcutConflict')); (event.currentTarget as HTMLInputElement).value = shortcutOverrides[command] ?? ''; return; } if (value) shortcutOverrides[command] = value; else delete shortcutOverrides[command]; persist({ ...session, settings: { ...session.settings, shortcutOverrides } }); }
   function setPreserveOnRestart(event: Event) { const preserve = (event.currentTarget as HTMLInputElement).checked; const next = { ...session, settings: { ...session.settings, preserveOnRestart: preserve } }; session = next; persistSettings(next.settings); if (preserve) localStorage.setItem(SESSION_KEY, serializeSession(next)); else localStorage.removeItem(SESSION_KEY); }
   async function setMenuBarIcon(event: Event) { const visible = (event.currentTarget as HTMLInputElement).checked; persist({ ...session, settings: { ...session.settings, showMenuBarIcon: visible } }); await invoke('set_menu_bar_icon_visible', { visible }); }
   async function setDockIcon(event: Event) {
@@ -123,7 +148,7 @@
   }
   function setLanguage(tabId: string, event: Event) {
     const language = (event.currentTarget as HTMLSelectElement).value;
-    persist(updateTab(session, tabId, { language }));
+    persist(updateTab(session, tabId, { language, languageManuallySelected: true }));
   }
   async function setEdgeOptions() {
     try { await invoke('set_edge_trigger_options', { leftEnabled: session.settings.leftEdgeEnabled, rightEnabled: session.settings.rightEdgeEnabled, dwellMs: session.settings.edgeDwellMs }); }
@@ -153,7 +178,7 @@
   function setEditorVisibility(key: 'showLineNumbers' | 'showMinimap' | 'showFolding' | 'showGlyphMargin', event: Event) {
     persist({ ...session, settings: { ...session.settings, [key]: (event.currentTarget as HTMLInputElement).checked } });
   }
-  function setDisplayVisibility(key: 'showBreadcrumbs' | 'showStatusBar', event: Event) {
+  function setDisplayVisibility(key: 'showTabs' | 'showBreadcrumbs' | 'showStatusBar', event: Event) {
     persist({ ...session, settings: { ...session.settings, [key]: (event.currentTarget as HTMLInputElement).checked } });
   }
   function openSettings() { overlayOrigin = document.activeElement as HTMLElement | null; showSettings = true; window.setTimeout(() => settingsCloseButton?.focus(), 0); }
@@ -178,8 +203,13 @@
     if (!query) return [];
     return session.tabs.flatMap((tab) => {
       const content = tab.content.toLowerCase();
-      const index = content.indexOf(query);
-      return index < 0 ? [] : [{ tab, index, excerpt: tab.content.slice(Math.max(0, index - 32), index + query.length + 48).replace(/\s+/g, ' ') }];
+      const results: Array<{ tab: SessionTab; index: number; excerpt: string }> = [];
+      let index = content.indexOf(query);
+      while (index >= 0 && results.length < 100) {
+        results.push({ tab, index, excerpt: tab.content.slice(Math.max(0, index - 32), index + query.length + 48).replace(/\s+/g, ' ') });
+        index = content.indexOf(query, index + Math.max(query.length, 1));
+      }
+      return results;
     });
   }
   function focusSearchResult(tabId: string) { persist(focusTab(session, tabId)); closeSearch(); }
@@ -401,7 +431,7 @@
   });
 </script>
 <svelte:head><title>{t('appTitle')}</title></svelte:head>
-  <main class="shell" class:side-tabs={session.settings.tabLayout !== 'top'} class:side-tabs-right={session.settings.tabLayout === 'right'}>
+  <main class="shell" class:side-tabs={session.settings.showTabs && session.settings.tabLayout !== 'top'} class:side-tabs-right={session.settings.showTabs && session.settings.tabLayout !== 'top' && (status.triggerEdge ? status.triggerEdge === 'left' : session.settings.tabLayout === 'right')}>
   <ToolbarMount />
   <header class="toolbar" aria-label={t('toolbarAria')}>
     <button onclick={newTab} title={t('newTab')}>＋ {t('new')}</button>
@@ -416,7 +446,7 @@
     <button onclick={openSettings} aria-haspopup="dialog">{t('settings')}</button>
     <button class="pin" aria-pressed={pinned} onclick={togglePinned}>{pinned ? t('unpin') : t('pin')}</button>
   </header>
-  <nav class="tabs" class:compressed-tabs={session.settings.tabLayout === 'top' && session.settings.topTabBehavior === 'compress'} aria-label={t('tabsAria')}>
+  {#if session.settings.showTabs}<nav class="tabs" class:compressed-tabs={session.settings.tabLayout === 'top' && session.settings.topTabBehavior === 'compress'} aria-label={t('tabsAria')}>
     {#each session.tabs as tab (tab.id)}
       <div class:active={tab.id === activeTab?.id} class="tab-wrap">
         <button class="tab" draggable="true" ondragstart={(event) => startTabDrag(tab.id, event)} onclick={() => persist(focusTab(session, tab.id))} ondblclick={(event) => { event.stopPropagation(); renameTab(tab.id); }} title={`${tab.filePath ?? tab.title}${t('tabDragHint')}`}>{tab.dirty ? '● ' : ''}{tab.title}{tab.kind === 'preview' ? ` · ${t('previewSuffix')}` : ''}</button>
@@ -425,7 +455,7 @@
     {/each}
     {#if session.tabs.length === 0}<button class="empty-tab" onclick={newTab}>{t('newTab')}</button>{/if}
     <button class="restore" onclick={restoreClosed} disabled={session.undoSlots.length === 0} title={session.undoSlots[0] ? `${session.undoSlots[0].tab.title} · ${session.undoSlots[0].reason === 'expired' ? t('expired') : t('closed')}` : t('noUndo')}>{t('restoreClosed')}{session.undoSlots.length ? ` (${session.undoSlots.length})` : ''}</button>
-  </nav>
+  </nav>{/if}
   <section class:split-workspace={session.groups.length > 1} class:split-horizontal={splitOrientation() === 'horizontal'} class="workspace" aria-label={t('workspaceAria')}>
     {#each session.groups as group (group.id)}
       {@const tab = groupTab(group)}
@@ -445,7 +475,7 @@
         <input bind:this={searchInput} bind:value={searchQuery} placeholder={t('searchPlaceholder')} aria-label={t('searchInputAria')} />
         <div class="search-results">
           {#if searchQuery.trim() && searchResults().length === 0}<p>{t('noMatches')}</p>{/if}
-          {#each searchResults() as result (result.tab.id)}
+          {#each searchResults() as result (`${result.tab.id}:${result.index}`)}
             <button class="search-result" onclick={() => focusSearchResult(result.tab.id)}><strong>{result.tab.title}</strong><span>{result.excerpt}</span></button>
           {/each}
         </div>
@@ -484,6 +514,7 @@
           <label class="checkbox"><input type="checkbox" checked={session.settings.showMinimap} onchange={(event) => setEditorVisibility('showMinimap', event)} />{t('minimap')}</label>
           <label class="checkbox"><input type="checkbox" checked={session.settings.showFolding} onchange={(event) => setEditorVisibility('showFolding', event)} />{t('folding')}</label>
           <label class="checkbox"><input type="checkbox" checked={session.settings.showGlyphMargin} onchange={(event) => setEditorVisibility('showGlyphMargin', event)} />{t('glyphMargin')}</label>
+          <label class="checkbox"><input type="checkbox" checked={session.settings.showTabs} onchange={(event) => setDisplayVisibility('showTabs', event)} />{t('tabBar')}</label>
           <label class="checkbox"><input type="checkbox" checked={session.settings.showBreadcrumbs} onchange={(event) => setDisplayVisibility('showBreadcrumbs', event)} />{t('breadcrumbs')}</label>
           <label class="checkbox"><input type="checkbox" checked={session.settings.showStatusBar} onchange={(event) => setDisplayVisibility('showStatusBar', event)} />{t('statusBar')}</label>
         </fieldset>

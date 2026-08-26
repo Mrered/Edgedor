@@ -16,6 +16,8 @@ struct PanelStatus {
     visible: bool,
     focused: bool,
     bridge_ready: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trigger_edge: Option<String>,
 }
 
 struct PanelState(std::sync::Mutex<PanelStatus>);
@@ -268,6 +270,9 @@ fn panel_action(action: &str, app: AppHandle, state: State<'_, PanelState>) -> R
         _ => unreachable!(),
     };
     (status.visible, status.focused) = native_result;
+    if matches!(action, "show" | "hide") {
+        status.trigger_edge = None;
+    }
     let next = status.clone();
     app.emit("panel_status", next.clone()).map_err(|error| error.to_string())?;
     Ok(next)
@@ -275,7 +280,7 @@ fn panel_action(action: &str, app: AppHandle, state: State<'_, PanelState>) -> R
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let state = PanelState(std::sync::Mutex::new(PanelStatus { visible: false, focused: false, bridge_ready: false }));
+    let state = PanelState(std::sync::Mutex::new(PanelStatus { visible: false, focused: false, bridge_ready: false, trigger_edge: None }));
     let builder = tauri::Builder::default().manage(state);
     #[cfg(target_os = "macos")]
     let builder = builder.manage(native_panel::NativePanel::default());

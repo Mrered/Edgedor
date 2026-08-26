@@ -130,7 +130,8 @@ impl NativePanel {
                 if let Err(error) = panel.show_at_edge_at(_edge, point) {
                     eprintln!("Edgedor edge panel show failed: {error}");
                 } else {
-                    let _ = app.emit("panel_status", serde_json::json!({"visible": true, "focused": true, "bridgeReady": true}));
+                    let trigger_edge = match _edge { edge_trigger::Edge::Left => "left", edge_trigger::Edge::Right => "right" };
+                    let _ = app.emit("panel_status", serde_json::json!({"visible": true, "focused": true, "bridgeReady": true, "triggerEdge": trigger_edge}));
                 }
             }
         })
